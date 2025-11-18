@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{
     collections::{HashSet, VecDeque},
     env,
@@ -28,10 +30,7 @@ use crossterm::{
 use serde::Deserialize;
 use tempfile::NamedTempFile;
 use textwrap::{Options as WrapOptions, wrap};
-use tokio::{
-    process::Command as TokioCommand,
-    time::{Duration, sleep},
-};
+use tokio::process::Command as TokioCommand;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -93,11 +92,43 @@ struct App {
     repo: Repo,
     pr_number: u64,
     skip_store: SkipStore,
-    threads: Vec<Thread>,
-    current: usize,
+    active_threads: Vec<Thread>,
+    skipped_threads: Vec<Thread>,
+    current_active: usize,
+    current_skipped: usize,
+    view: ThreadView,
     status_line: Option<String>,
     scroll_offset: usize,
     queued_replies: VecDeque<QueuedReply>,
+}
+
+#[derive(Clone, Copy)]
+enum ThreadView {
+    Active,
+    Skipped,
+}
+
+impl ThreadView {
+    fn toggle(self) -> Self {
+        match self {
+            ThreadView::Active => ThreadView::Skipped,
+            ThreadView::Skipped => ThreadView::Active,
+        }
+    }
+
+    fn skip_action_label(self) -> &'static str {
+        match self {
+            ThreadView::Active => "s skip",
+            ThreadView::Skipped => "s unskip",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            ThreadView::Active => "unskipped",
+            ThreadView::Skipped => "skipped",
+        }
+    }
 }
 
 impl App {
@@ -108,19 +139,112 @@ impl App {
         skip_store: SkipStore,
         threads: Vec<Thread>,
     ) -> Self {
-        let mut app = Self {
+        let (active_threads, skipped_threads) = Self::partition_threads(&skip_store, threads);
+        Self {
             gh,
             repo,
             pr_number,
             skip_store,
-            threads,
-            current: 0,
+            active_threads,
+            skipped_threads,
+            current_active: 0,
+            current_skipped: 0,
+            view: ThreadView::Active,
             status_line: None,
             scroll_offset: 0,
             queued_replies: VecDeque::new(),
-        };
-        app.apply_skips();
-        app
+        }
+    }
+
+    fn partition_threads(
+        skip_store: &SkipStore,
+        threads: Vec<Thread>,
+    ) -> (Vec<Thread>, Vec<Thread>) {
+        let mut active = Vec::new();
+        let mut skipped = Vec::new();
+        for thread in threads {
+            if skip_store.contains(&thread.id) {
+                skipped.push(thread);
+            } else {
+                active.push(thread);
+            }
+        }
+        Self::sort_threads(&mut active);
+        Self::sort_threads(&mut skipped);
+        (active, skipped)
+    }
+
+    fn sort_threads(list: &mut Vec<Thread>) {
+        list.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+    }
+
+    fn threads_for_view(&self, view: ThreadView) -> &Vec<Thread> {
+        match view {
+            ThreadView::Active => &self.active_threads,
+            ThreadView::Skipped => &self.skipped_threads,
+        }
+    }
+
+    fn threads_for_view_mut(&mut self, view: ThreadView) -> &mut Vec<Thread> {
+        match view {
+            ThreadView::Active => &mut self.active_threads,
+            ThreadView::Skipped => &mut self.skipped_threads,
+        }
+    }
+
+    fn index_for_view(&self, view: ThreadView) -> usize {
+        match view {
+            ThreadView::Active => self.current_active,
+            ThreadView::Skipped => self.current_skipped,
+        }
+    }
+
+    fn index_for_view_mut(&mut self, view: ThreadView) -> &mut usize {
+        match view {
+            ThreadView::Active => &mut self.current_active,
+            ThreadView::Skipped => &mut self.current_skipped,
+        }
+    }
+
+    fn current_threads(&self) -> &Vec<Thread> {
+        self.threads_for_view(self.view)
+    }
+
+    fn current_threads_mut(&mut self) -> &mut Vec<Thread> {
+        self.threads_for_view_mut(self.view)
+    }
+
+    fn current_index(&self) -> usize {
+        self.index_for_view(self.view)
+    }
+
+    fn current_index_mut(&mut self) -> &mut usize {
+        self.index_for_view_mut(self.view)
+    }
+
+    fn current_thread(&self) -> Option<&Thread> {
+        self.current_threads().get(self.current_index())
+    }
+
+    fn clamp_index_for_view(&mut self, view: ThreadView) {
+        let len = self.threads_for_view(view).len();
+        let idx = self.index_for_view_mut(view);
+        if len == 0 {
+            *idx = 0;
+        } else if *idx >= len {
+            *idx = len - 1;
+        }
+    }
+
+    fn clamp_current_index(&mut self) {
+        self.clamp_index_for_view(self.view);
+    }
+
+    fn toggle_view(&mut self) {
+        self.view = self.view.toggle();
+        self.clamp_current_index();
+        self.reset_scroll();
+        self.status_line = Some(format!("Showing {} threads.", self.view.name()));
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -142,12 +266,18 @@ impl App {
                         KeyCode::Left if key.modifiers.is_empty() => self.prev_thread(),
                         KeyCode::Down if key.modifiers.is_empty() => self.scroll_down(1),
                         KeyCode::Up if key.modifiers.is_empty() => self.scroll_up(1),
+                        KeyCode::Tab => self.toggle_view(),
                         KeyCode::Char('s') if key.modifiers.is_empty() => {
+                            let action = match self.view {
+                                ThreadView::Active => "skip",
+                                ThreadView::Skipped => "unskip",
+                            };
                             if let Err(err) = self.skip_current() {
-                                self.status_line = Some(format!("Failed to skip thread: {err}"));
+                                self.status_line =
+                                    Some(format!("Failed to {action} thread: {err}"));
                             }
                         }
-                        KeyCode::Char('c') if key.modifiers.is_empty() => {
+                        KeyCode::Char('r') if key.modifiers.is_empty() => {
                             if let Err(err) = self.reply_to_current(&mut terminal).await {
                                 self.status_line = Some(format!("Failed to post reply: {err}"));
                             }
@@ -212,15 +342,26 @@ impl App {
 
     fn write_view(&self, buf: &mut String) -> std::fmt::Result {
         let now = Utc::now();
-        if self.threads.is_empty() {
+        let threads = self.current_threads();
+        if threads.is_empty() {
             writeln!(
                 buf,
                 "{}",
-                format!("PR #{} – No review threads to display.", self.pr_number).bold()
+                format!(
+                    "PR #{} – No {} threads to display.",
+                    self.pr_number,
+                    self.view.name()
+                )
+                .bold()
             )?;
-            writeln!(buf, "{}", "Press q to exit.".with(Color::DarkGrey))?;
+            let hint = match self.view {
+                ThreadView::Active => "Press tab to view skipped threads or q to exit.",
+                ThreadView::Skipped => "Press tab to return to unskipped threads or q to exit.",
+            };
+            writeln!(buf, "{}", hint.with(Color::DarkGrey))?;
         } else {
-            let thread = &self.threads[self.current];
+            let current_index = self.current_index();
+            let thread = &threads[current_index];
             let muted = Color::Rgb {
                 r: 110,
                 g: 110,
@@ -234,9 +375,14 @@ impl App {
             writeln!(
                 buf,
                 "{}   {}",
-                format!("Thread {}/{}", self.current + 1, self.threads.len())
-                    .with(muted)
-                    .bold(),
+                format!(
+                    "Thread {}/{} ({})",
+                    current_index + 1,
+                    threads.len(),
+                    self.view.name()
+                )
+                .with(muted)
+                .bold(),
                 format!("PR #{}", self.pr_number).with(muted)
             )?;
             writeln!(
@@ -314,7 +460,11 @@ impl App {
         writeln!(
             buf,
             "{}",
-            "←/→ thread  ↑/↓ scroll  c reply  p publish  s skip  q quit".with(Color::DarkGrey)
+            format!(
+                "←/→ thread  ↑/↓ scroll  tab toggle view  r reply  p publish  {}  q quit",
+                self.view.skip_action_label()
+            )
+            .with(Color::DarkGrey)
         )?;
         if let Some(message) = &self.status_line {
             writeln!(buf, "{}", message.as_str().with(Color::Yellow))?;
@@ -328,21 +478,25 @@ impl App {
     }
 
     fn next_thread(&mut self) {
-        if self.threads.is_empty() {
+        let len = self.current_threads().len();
+        if len == 0 {
             return;
         }
-        self.current = (self.current + 1) % self.threads.len();
+        let index = self.current_index_mut();
+        *index = (*index + 1) % len;
         self.reset_scroll();
     }
 
     fn prev_thread(&mut self) {
-        if self.threads.is_empty() {
+        let len = self.current_threads().len();
+        if len == 0 {
             return;
         }
-        if self.current == 0 {
-            self.current = self.threads.len() - 1;
+        let index = self.current_index_mut();
+        if *index == 0 {
+            *index = len - 1;
         } else {
-            self.current -= 1;
+            *index -= 1;
         }
         self.reset_scroll();
     }
@@ -366,22 +520,50 @@ impl App {
     }
 
     fn skip_current(&mut self) -> Result<()> {
-        let Some(thread) = self.threads.get(self.current) else {
+        match self.view {
+            ThreadView::Active => self.skip_selected_thread(),
+            ThreadView::Skipped => self.unskip_selected_thread(),
+        }
+    }
+
+    fn skip_selected_thread(&mut self) -> Result<()> {
+        self.clamp_index_for_view(ThreadView::Active);
+        if self.active_threads.is_empty() {
             self.status_line = Some("No thread to skip.".into());
             return Ok(());
-        };
+        }
+        let thread = self.active_threads.remove(self.current_active);
         self.skip_store
             .add(thread.id.clone())
             .context("failed to persist skip state")?;
-        self.threads.remove(self.current);
-        self.clamp_index();
+        self.skipped_threads.push(thread);
+        Self::sort_threads(&mut self.skipped_threads);
+        self.clamp_index_for_view(ThreadView::Active);
         self.reset_scroll();
         self.status_line = Some("Thread skipped.".into());
         Ok(())
     }
 
+    fn unskip_selected_thread(&mut self) -> Result<()> {
+        self.clamp_index_for_view(ThreadView::Skipped);
+        if self.skipped_threads.is_empty() {
+            self.status_line = Some("No skipped thread to unskip.".into());
+            return Ok(());
+        }
+        let thread = self.skipped_threads.remove(self.current_skipped);
+        self.skip_store
+            .remove(&thread.id)
+            .context("failed to persist skip state")?;
+        self.active_threads.push(thread);
+        Self::sort_threads(&mut self.active_threads);
+        self.clamp_index_for_view(ThreadView::Skipped);
+        self.reset_scroll();
+        self.status_line = Some("Thread unskipped.".into());
+        Ok(())
+    }
+
     async fn reply_to_current(&mut self, terminal: &mut TerminalSession) -> Result<()> {
-        let Some(thread) = self.threads.get(self.current) else {
+        let Some(thread) = self.current_thread() else {
             self.status_line = Some("No thread selected.".into());
             return Ok(());
         };
@@ -399,7 +581,7 @@ impl App {
         };
 
         self.queued_replies.push_back(QueuedReply {
-            comment_id: target_comment.id.clone(),
+            comment_database_id: target_comment.database_id,
             body: reply_body,
         });
         self.status_line = Some(format!(
@@ -411,27 +593,24 @@ impl App {
 
     async fn publish_queue(&mut self) -> Result<()> {
         if self.queued_replies.is_empty() {
-            self.status_line = Some("No queued replies to publish.".into());
+            self.status_line = None;
             return Ok(());
         }
         let total = self.queued_replies.len();
-        let spinner = ['|', '/', '-', '\\'];
         let mut index = 0;
         while let Some(reply) = self.queued_replies.front().cloned() {
-            for &frame in &spinner {
-                self.status_line = Some(format!(
-                    "Publishing reply {}/{} {}",
-                    index + 1,
-                    total,
-                    frame
-                ));
-                self.render()?;
-                sleep(Duration::from_millis(80)).await;
-            }
+            self.status_line = Some(format!("Publishing reply {}/{}", index + 1, total,));
+
+            self.render()?;
+
             self.gh
-                .post_reply(&reply.comment_id, &reply.body)
-                .await
-                .context("failed to publish reply")?;
+                .post_reply(
+                    &self.repo,
+                    self.pr_number,
+                    reply.comment_database_id,
+                    &reply.body,
+                )
+                .await?;
             self.queued_replies.pop_front();
             index += 1;
         }
@@ -440,44 +619,41 @@ impl App {
         Ok(())
     }
 
-    fn apply_skips(&mut self) {
-        self.threads
-            .retain(|thread| !self.skip_store.contains(&thread.id));
-        self.clamp_index();
-        self.reset_scroll();
-    }
-
     async fn refresh_threads(&mut self) -> Result<()> {
-        let current_id = self.threads.get(self.current).map(|t| t.id.clone());
+        let current_active_id = self
+            .active_threads
+            .get(self.current_active)
+            .map(|t| t.id.clone());
+        let current_skipped_id = self
+            .skipped_threads
+            .get(self.current_skipped)
+            .map(|t| t.id.clone());
         let updated = self
             .gh
             .fetch_threads(&self.repo, self.pr_number)
             .await
             .context("failed to refresh threads")?;
-        self.threads = updated
-            .into_iter()
-            .filter(|t| !self.skip_store.contains(&t.id))
-            .collect();
-        if let Some(id) = current_id {
-            if let Some(index) = self.threads.iter().position(|t| t.id == id) {
-                self.current = index;
-            } else {
-                self.clamp_index();
-                self.reset_scroll();
-            }
-        } else {
-            self.clamp_index();
-            self.reset_scroll();
-        }
+        let (active, skipped) = Self::partition_threads(&self.skip_store, updated);
+        self.active_threads = active;
+        self.skipped_threads = skipped;
+        self.restore_selection(ThreadView::Active, current_active_id);
+        self.restore_selection(ThreadView::Skipped, current_skipped_id);
+        self.clamp_current_index();
+        self.reset_scroll();
         Ok(())
     }
 
-    fn clamp_index(&mut self) {
-        if self.threads.is_empty() {
-            self.current = 0;
-            self.scroll_offset = 0;
-        } else if self.current >= self.threads.len() {
-            self.current = self.threads.len() - 1;
+    fn restore_selection(&mut self, view: ThreadView, target: Option<String>) {
+        let target_pos =
+            target.and_then(|id| self.threads_for_view(view).iter().position(|t| t.id == id));
+        let len = self.threads_for_view(view).len();
+        let index = self.index_for_view_mut(view);
+        if let Some(found) = target_pos {
+            *index = found;
+        } else if len == 0 {
+            *index = 0;
+        } else if *index >= len {
+            *index = len - 1;
         }
     }
 }
@@ -501,6 +677,7 @@ impl Thread {
 #[derive(Clone)]
 struct Comment {
     id: String,
+    database_id: u64,
     author: String,
     body: String,
     diff_hunk: Option<String>,
@@ -509,7 +686,7 @@ struct Comment {
 
 #[derive(Clone)]
 struct QueuedReply {
-    comment_id: String,
+    comment_database_id: u64,
     body: String,
 }
 
@@ -553,10 +730,11 @@ impl GhCli {
                             path
                             comments(first: 100) {
                                 nodes {
-                                    id
-                                    body
-                                    diffHunk
-                                    createdAt
+                            id
+                            databaseId
+                            body
+                            diffHunk
+                            createdAt
                                     author {
                                         login
                                     }
@@ -601,19 +779,22 @@ impl GhCli {
         Ok(threads)
     }
 
-    async fn post_reply(&self, comment_id: &str, body: &str) -> Result<()> {
-        let mutation = r#"mutation($commentId: ID!, $body: String!) {
-            addPullRequestReviewComment(input: {commentId: $commentId, body: $body}) {
-                comment { id }
-            }
-        }"#;
+    async fn post_reply(
+        &self,
+        repo: &Repo,
+        pr_number: u64,
+        comment_id: u64,
+        body: &str,
+    ) -> Result<()> {
+        let endpoint = format!(
+            "repos/{}/{}/pulls/{}/comments/{}/replies",
+            repo.owner, repo.name, pr_number, comment_id
+        );
         let args = vec![
             "api".to_string(),
-            "graphql".to_string(),
-            "-f".to_string(),
-            format!("query={}", mutation),
-            "-F".to_string(),
-            format!("commentId={}", comment_id),
+            endpoint,
+            "-X".to_string(),
+            "POST".to_string(),
             "-f".to_string(),
             format!("body={}", body),
         ];
@@ -716,6 +897,8 @@ struct RawCommentConnection {
 #[derive(Deserialize)]
 struct RawComment {
     id: String,
+    #[serde(rename = "databaseId")]
+    database_id: Option<u64>,
     body: String,
     #[serde(rename = "diffHunk")]
     diff_hunk: Option<String>,
@@ -763,8 +946,12 @@ impl TryFrom<RawComment> for Comment {
 
     fn try_from(raw: RawComment) -> Result<Self> {
         let created_at = parse_timestamp(&raw.created_at)?;
+        let database_id = raw
+            .database_id
+            .ok_or_else(|| anyhow!("comment missing databaseId"))?;
         Ok(Self {
             id: raw.id,
+            database_id,
             author: raw
                 .author
                 .map(|a| a.login)
@@ -831,6 +1018,13 @@ impl SkipStore {
 
     fn add(&mut self, id: String) -> Result<()> {
         if self.skipped.insert(id) {
+            self.persist()?;
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, id: &str) -> Result<()> {
+        if self.skipped.remove(id) {
             self.persist()?;
         }
         Ok(())
