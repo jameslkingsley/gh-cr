@@ -655,7 +655,8 @@ impl App {
             return Ok(());
         };
 
-        let reply_body = match terminal.suspend_for_editor()? {
+        let editor_template = build_reply_editor_template(thread);
+        let reply_body = match terminal.suspend_for_editor(&editor_template)? {
             Some(body) => body,
             None => {
                 self.status_line = Some("Reply cancelled.".into());
@@ -744,6 +745,49 @@ impl App {
             *index = len - 1;
         }
     }
+}
+
+fn build_reply_editor_template(thread: &Thread) -> String {
+    let mut buf = String::from("\n\n");
+    let now = Utc::now();
+    let status = if thread.is_resolved { "resolved" } else { "open" };
+    let _ = writeln!(
+        buf,
+        "# Reply to the thread on {} ({} status).",
+        thread.path,
+        status
+    );
+    let _ = writeln!(
+        buf,
+        "# Lines starting with '# ' are ignored when submitting the reply."
+    );
+    let _ = writeln!(buf, "#");
+    let _ = writeln!(buf, "# --- Thread comments ---");
+    let context_width = COMMENT_WRAP.saturating_sub(2).max(10);
+    let context_wrap = WrapOptions::new(context_width).break_words(false);
+    for comment in &thread.comments {
+        let _ = writeln!(
+            buf,
+            "# {} ({})",
+            comment.author,
+            humanize_relative(now, comment.created_at)
+        );
+        if comment.body.trim().is_empty() {
+            let _ = writeln!(buf, "#");
+            continue;
+        }
+        for line in comment.body.lines() {
+            if line.trim().is_empty() {
+                let _ = writeln!(buf, "#");
+            } else {
+                for chunk in wrap(line, context_wrap.clone()) {
+                    let _ = writeln!(buf, "# {}", chunk);
+                }
+            }
+        }
+        let _ = writeln!(buf, "#");
+    }
+    buf
 }
 
 #[derive(Clone)]
@@ -1162,9 +1206,9 @@ impl TerminalSession {
         Ok(Self { active: true })
     }
 
-    fn suspend_for_editor(&mut self) -> Result<Option<String>> {
+    fn suspend_for_editor(&mut self, initial_contents: &str) -> Result<Option<String>> {
         self.deactivate()?;
-        let result = launch_editor();
+        let result = launch_editor(initial_contents);
         self.activate()?;
         result
     }
@@ -1204,10 +1248,13 @@ impl Drop for TerminalSession {
     }
 }
 
-fn launch_editor() -> Result<Option<String>> {
+fn launch_editor(initial_contents: &str) -> Result<Option<String>> {
     let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
     println!("Opening editor: {editor}");
     let mut tempfile = NamedTempFile::new().context("unable to create temp file")?;
+    tempfile
+        .write_all(initial_contents.as_bytes())
+        .context("failed to prime editor template")?;
     tempfile.flush()?;
     let status = StdCommand::new(&editor)
         .arg(tempfile.path())
@@ -1217,8 +1264,61 @@ fn launch_editor() -> Result<Option<String>> {
         return Err(anyhow!("editor exited with {}", status));
     }
     let body = fs::read_to_string(tempfile.path()).context("failed to read editor contents")?;
-    if body.trim().is_empty() {
-        return Ok(None);
+    Ok(sanitize_editor_contents(&body))
+}
+
+fn sanitize_editor_contents(raw: &str) -> Option<String> {
+    let filtered_lines: Vec<&str> = raw
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    let filtered = filtered_lines.join("\n");
+    let trimmed = filtered.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(wrap_reply_body(trimmed))
     }
-    Ok(Some(body))
+}
+
+fn wrap_reply_body(body: &str) -> String {
+    let wrap_opts = WrapOptions::new(COMMENT_WRAP).break_words(false);
+    let mut result = Vec::new();
+    let mut paragraph: Vec<&str> = Vec::new();
+    let mut pending_blank = false;
+
+    for line in body.lines() {
+        if line.trim().is_empty() {
+            if !paragraph.is_empty() {
+                let merged = paragraph.join(" ");
+                for chunk in wrap(merged.as_str(), wrap_opts.clone()) {
+                    result.push(chunk.into_owned());
+                }
+                paragraph.clear();
+            }
+            pending_blank = true;
+        } else {
+            if pending_blank && !result.is_empty() && !result.last().unwrap().is_empty() {
+                result.push(String::new());
+            }
+            pending_blank = false;
+            paragraph.push(line.trim());
+        }
+    }
+
+    if !paragraph.is_empty() {
+        if pending_blank && !result.is_empty() && !result.last().unwrap().is_empty() {
+            result.push(String::new());
+        }
+        let merged = paragraph.join(" ");
+        for chunk in wrap(merged.as_str(), wrap_opts) {
+            result.push(chunk.into_owned());
+        }
+    }
+
+    while matches!(result.last(), Some(line) if line.is_empty()) {
+        result.pop();
+    }
+
+    result.join("\n")
 }
