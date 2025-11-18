@@ -1,8 +1,8 @@
 name: release
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
 permissions:
   contents: write
 jobs:
@@ -29,6 +29,6 @@ jobs:
       TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v5
-      - uses: cli/gh-extension-precompile@v1
+      - uses: cli/gh-extension-precompile@v2
         with:
           build_script_override: "scripts/build.sh"
