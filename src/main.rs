@@ -45,11 +45,15 @@ async fn main() -> Result<()> {
         }
     };
 
-    let pr_number = match gh.current_pr_number().await {
-        Ok(num) => num,
-        Err(err) => {
-            eprintln!("No pull request associated with the current branch: {err}");
-            return Ok(());
+    let pr_number = if let Some(num) = args.pr_number {
+        num
+    } else {
+        match gh.current_pr_number().await {
+            Ok(num) => num,
+            Err(err) => {
+                eprintln!("No pull request associated with the current branch: {err}");
+                return Ok(());
+            }
         }
     };
 
@@ -77,6 +81,10 @@ struct Cli {
     /// Print the current thread content once and exit (no TUI)
     #[arg(long)]
     dump: bool,
+
+    /// Override the inferred PR number
+    #[arg(value_parser = clap::value_parser!(u64))]
+    pr_number: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -93,7 +101,9 @@ struct App {
     pr_number: u64,
     skip_store: SkipStore,
     active_threads: Vec<Thread>,
+    unresolved_threads: Vec<Thread>,
     skipped_threads: Vec<Thread>,
+    current_unresolved: usize,
     current_active: usize,
     current_skipped: usize,
     view: ThreadView,
@@ -104,27 +114,30 @@ struct App {
 
 #[derive(Clone, Copy)]
 enum ThreadView {
+    Unresolved,
     Active,
     Skipped,
 }
 
 impl ThreadView {
-    fn toggle(self) -> Self {
+    fn next(self) -> Self {
         match self {
+            ThreadView::Unresolved => ThreadView::Active,
             ThreadView::Active => ThreadView::Skipped,
-            ThreadView::Skipped => ThreadView::Active,
+            ThreadView::Skipped => ThreadView::Unresolved,
         }
     }
 
     fn skip_action_label(self) -> &'static str {
         match self {
-            ThreadView::Active => "s skip",
+            ThreadView::Unresolved | ThreadView::Active => "s skip",
             ThreadView::Skipped => "s unskip",
         }
     }
 
     fn name(self) -> &'static str {
         match self {
+            ThreadView::Unresolved => "unresolved",
             ThreadView::Active => "unskipped",
             ThreadView::Skipped => "skipped",
         }
@@ -140,16 +153,19 @@ impl App {
         threads: Vec<Thread>,
     ) -> Self {
         let (active_threads, skipped_threads) = Self::partition_threads(&skip_store, threads);
+        let unresolved_threads = Self::build_unresolved(&active_threads);
         Self {
             gh,
             repo,
             pr_number,
             skip_store,
             active_threads,
+            unresolved_threads,
             skipped_threads,
+            current_unresolved: 0,
             current_active: 0,
             current_skipped: 0,
-            view: ThreadView::Active,
+            view: ThreadView::Unresolved,
             status_line: None,
             scroll_offset: 0,
             queued_replies: VecDeque::new(),
@@ -178,8 +194,17 @@ impl App {
         list.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
     }
 
+    fn build_unresolved(active: &[Thread]) -> Vec<Thread> {
+        active
+            .iter()
+            .filter(|thread| !thread.is_resolved)
+            .cloned()
+            .collect()
+    }
+
     fn threads_for_view(&self, view: ThreadView) -> &Vec<Thread> {
         match view {
+            ThreadView::Unresolved => &self.unresolved_threads,
             ThreadView::Active => &self.active_threads,
             ThreadView::Skipped => &self.skipped_threads,
         }
@@ -187,6 +212,7 @@ impl App {
 
     fn threads_for_view_mut(&mut self, view: ThreadView) -> &mut Vec<Thread> {
         match view {
+            ThreadView::Unresolved => &mut self.unresolved_threads,
             ThreadView::Active => &mut self.active_threads,
             ThreadView::Skipped => &mut self.skipped_threads,
         }
@@ -194,6 +220,7 @@ impl App {
 
     fn index_for_view(&self, view: ThreadView) -> usize {
         match view {
+            ThreadView::Unresolved => self.current_unresolved,
             ThreadView::Active => self.current_active,
             ThreadView::Skipped => self.current_skipped,
         }
@@ -201,6 +228,7 @@ impl App {
 
     fn index_for_view_mut(&mut self, view: ThreadView) -> &mut usize {
         match view {
+            ThreadView::Unresolved => &mut self.current_unresolved,
             ThreadView::Active => &mut self.current_active,
             ThreadView::Skipped => &mut self.current_skipped,
         }
@@ -240,11 +268,31 @@ impl App {
         self.clamp_index_for_view(self.view);
     }
 
-    fn toggle_view(&mut self) {
-        self.view = self.view.toggle();
+    fn advance_view(&mut self) {
+        self.view = self.view.next();
         self.clamp_current_index();
         self.reset_scroll();
         self.status_line = Some(format!("Showing {} threads.", self.view.name()));
+    }
+
+    fn rebuild_unresolved(&mut self, preferred: Option<String>) {
+        let fallback = self
+            .unresolved_threads
+            .get(self.current_unresolved)
+            .map(|t| t.id.clone());
+        let target = preferred.or(fallback);
+        self.unresolved_threads = Self::build_unresolved(&self.active_threads);
+        if let Some(id) = target {
+            if let Some(pos) = self.unresolved_threads.iter().position(|t| t.id == id) {
+                self.current_unresolved = pos;
+                return;
+            }
+        }
+        if self.unresolved_threads.is_empty() {
+            self.current_unresolved = 0;
+        } else if self.current_unresolved >= self.unresolved_threads.len() {
+            self.current_unresolved = self.unresolved_threads.len() - 1;
+        }
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -266,10 +314,10 @@ impl App {
                         KeyCode::Left if key.modifiers.is_empty() => self.prev_thread(),
                         KeyCode::Down if key.modifiers.is_empty() => self.scroll_down(1),
                         KeyCode::Up if key.modifiers.is_empty() => self.scroll_up(1),
-                        KeyCode::Tab => self.toggle_view(),
+                        KeyCode::Tab if key.modifiers.is_empty() => self.advance_view(),
                         KeyCode::Char('s') if key.modifiers.is_empty() => {
                             let action = match self.view {
-                                ThreadView::Active => "skip",
+                                ThreadView::Unresolved | ThreadView::Active => "skip",
                                 ThreadView::Skipped => "unskip",
                             };
                             if let Err(err) = self.skip_current() {
@@ -355,8 +403,11 @@ impl App {
                 .bold()
             )?;
             let hint = match self.view {
+                ThreadView::Unresolved => {
+                    "Press tab to view all unskipped threads or skipped threads. Press q to exit."
+                }
                 ThreadView::Active => "Press tab to view skipped threads or q to exit.",
-                ThreadView::Skipped => "Press tab to return to unskipped threads or q to exit.",
+                ThreadView::Skipped => "Press tab to return to unresolved threads or q to exit.",
             };
             writeln!(buf, "{}", hint.with(Color::DarkGrey))?;
         } else {
@@ -461,7 +512,7 @@ impl App {
             buf,
             "{}",
             format!(
-                "←/→ thread  ↑/↓ scroll  tab toggle view  r reply  p publish  {}  q quit",
+                "←/→ thread  ↑/↓ scroll  tab switch view  r reply  p publish  {}  q quit",
                 self.view.skip_action_label()
             )
             .with(Color::DarkGrey)
@@ -521,24 +572,50 @@ impl App {
 
     fn skip_current(&mut self) -> Result<()> {
         match self.view {
-            ThreadView::Active => self.skip_selected_thread(),
+            ThreadView::Unresolved | ThreadView::Active => self.skip_selected_thread(),
             ThreadView::Skipped => self.unskip_selected_thread(),
         }
     }
 
     fn skip_selected_thread(&mut self) -> Result<()> {
-        self.clamp_index_for_view(ThreadView::Active);
-        if self.active_threads.is_empty() {
-            self.status_line = Some("No thread to skip.".into());
-            return Ok(());
-        }
-        let thread = self.active_threads.remove(self.current_active);
+        let thread = match self.view {
+            ThreadView::Active => {
+                self.clamp_index_for_view(ThreadView::Active);
+                if self.active_threads.is_empty() {
+                    self.status_line = Some("No thread to skip.".into());
+                    return Ok(());
+                }
+                self.active_threads.remove(self.current_active)
+            }
+            ThreadView::Unresolved => {
+                self.clamp_index_for_view(ThreadView::Unresolved);
+                if self.unresolved_threads.is_empty() {
+                    self.status_line = Some("No unresolved thread to skip.".into());
+                    return Ok(());
+                }
+                let thread = self.unresolved_threads.remove(self.current_unresolved);
+                if let Some(pos) = self
+                    .active_threads
+                    .iter()
+                    .position(|candidate| candidate.id == thread.id)
+                {
+                    self.active_threads.remove(pos);
+                    self.clamp_index_for_view(ThreadView::Active);
+                }
+                thread
+            }
+            ThreadView::Skipped => {
+                self.status_line = Some("Cannot skip thread in skipped view.".into());
+                return Ok(());
+            }
+        };
         self.skip_store
             .add(thread.id.clone())
             .context("failed to persist skip state")?;
         self.skipped_threads.push(thread);
         Self::sort_threads(&mut self.skipped_threads);
-        self.clamp_index_for_view(ThreadView::Active);
+        self.rebuild_unresolved(None);
+        self.clamp_index_for_view(self.view);
         self.reset_scroll();
         self.status_line = Some("Thread skipped.".into());
         Ok(())
@@ -554,8 +631,14 @@ impl App {
         self.skip_store
             .remove(&thread.id)
             .context("failed to persist skip state")?;
-        self.active_threads.push(thread);
+        self.active_threads.push(thread.clone());
         Self::sort_threads(&mut self.active_threads);
+        let preferred = if thread.is_resolved {
+            None
+        } else {
+            Some(thread.id.clone())
+        };
+        self.rebuild_unresolved(preferred);
         self.clamp_index_for_view(ThreadView::Skipped);
         self.reset_scroll();
         self.status_line = Some("Thread unskipped.".into());
@@ -620,6 +703,10 @@ impl App {
     }
 
     async fn refresh_threads(&mut self) -> Result<()> {
+        let current_unresolved_id = self
+            .unresolved_threads
+            .get(self.current_unresolved)
+            .map(|t| t.id.clone());
         let current_active_id = self
             .active_threads
             .get(self.current_active)
@@ -638,6 +725,7 @@ impl App {
         self.skipped_threads = skipped;
         self.restore_selection(ThreadView::Active, current_active_id);
         self.restore_selection(ThreadView::Skipped, current_skipped_id);
+        self.rebuild_unresolved(current_unresolved_id);
         self.clamp_current_index();
         self.reset_scroll();
         Ok(())
