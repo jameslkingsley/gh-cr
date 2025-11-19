@@ -297,8 +297,12 @@ impl App {
 
     async fn run(&mut self) -> Result<()> {
         let mut terminal = TerminalSession::enter()?;
+        let mut needs_render = true;
         loop {
-            self.render()?;
+            if needs_render {
+                self.render()?;
+                needs_render = false;
+            }
             match event::read()? {
                 Event::Key(key) => {
                     if key.code == KeyCode::Char('c')
@@ -308,13 +312,34 @@ impl App {
                     }
                     match key.code {
                         KeyCode::Char('q') if key.modifiers.is_empty() => break,
-                        KeyCode::Char('j') if key.modifiers.is_empty() => self.next_thread(),
-                        KeyCode::Char('k') if key.modifiers.is_empty() => self.prev_thread(),
-                        KeyCode::Right if key.modifiers.is_empty() => self.next_thread(),
-                        KeyCode::Left if key.modifiers.is_empty() => self.prev_thread(),
-                        KeyCode::Down if key.modifiers.is_empty() => self.scroll_down(1),
-                        KeyCode::Up if key.modifiers.is_empty() => self.scroll_up(1),
-                        KeyCode::Tab if key.modifiers.is_empty() => self.advance_view(),
+                        KeyCode::Char('j') if key.modifiers.is_empty() => {
+                            self.next_thread();
+                            needs_render = true;
+                        }
+                        KeyCode::Char('k') if key.modifiers.is_empty() => {
+                            self.prev_thread();
+                            needs_render = true;
+                        }
+                        KeyCode::Right if key.modifiers.is_empty() => {
+                            self.next_thread();
+                            needs_render = true;
+                        }
+                        KeyCode::Left if key.modifiers.is_empty() => {
+                            self.prev_thread();
+                            needs_render = true;
+                        }
+                        KeyCode::Down if key.modifiers.is_empty() => {
+                            self.scroll_down(1);
+                            needs_render = true;
+                        }
+                        KeyCode::Up if key.modifiers.is_empty() => {
+                            self.scroll_up(1);
+                            needs_render = true;
+                        }
+                        KeyCode::Tab if key.modifiers.is_empty() => {
+                            self.advance_view();
+                            needs_render = true;
+                        }
                         KeyCode::Char('s') if key.modifiers.is_empty() => {
                             let action = match self.view {
                                 ThreadView::Unresolved | ThreadView::Active => "skip",
@@ -324,29 +349,36 @@ impl App {
                                 self.status_line =
                                     Some(format!("Failed to {action} thread: {err}"));
                             }
+                            needs_render = true;
                         }
                         KeyCode::Char('r') if key.modifiers.is_empty() => {
                             if let Err(err) = self.reply_to_current(&mut terminal).await {
                                 self.status_line = Some(format!("Failed to post reply: {err}"));
                             }
+                            needs_render = true;
                         }
                         KeyCode::Char('p') if key.modifiers.is_empty() => {
                             if let Err(err) = self.publish_queue().await {
                                 self.status_line =
                                     Some(format!("Failed to publish replies: {err}"));
                             }
+                            needs_render = true;
                         }
                         _ => {}
                     }
                 }
                 Event::Mouse(me) => match me.kind {
-                    MouseEventKind::ScrollUp => self.scroll_up(3),
-                    MouseEventKind::ScrollDown => self.scroll_down(3),
+                    MouseEventKind::ScrollUp => {
+                        self.scroll_up(3);
+                        needs_render = true;
+                    }
+                    MouseEventKind::ScrollDown => {
+                        self.scroll_down(3);
+                        needs_render = true;
+                    }
                     _ => {}
                 },
-                Event::Resize(_, _) => {
-                    // Re-render on resize.
-                }
+                Event::Resize(_, _) => needs_render = true,
                 _ => {}
             }
         }
