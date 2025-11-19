@@ -438,12 +438,12 @@ impl App {
             )?;
             writeln!(
                 buf,
-                "{}   {}   {}",
+                "{}  {}  {}",
                 thread.path.as_str().with(accent),
                 if thread.is_resolved {
-                    "resolved".with(muted)
+                    "resolved".with(Color::DarkGreen)
                 } else {
-                    "open".with(Color::DarkYellow)
+                    "unresolved".with(Color::DarkYellow)
                 },
                 humanize_relative(now, thread.created_at).with(muted)
             )?;
@@ -455,7 +455,7 @@ impl App {
                         let styled_line = match line.chars().next() {
                             Some('+') => line.with(Color::DarkGreen),
                             Some('-') => line.with(Color::DarkRed),
-                            Some('@') => line.with(Color::DarkYellow),
+                            Some('@') => line.with(Color::DarkGrey),
                             _ => line.with(Color::Grey),
                         };
                         styled_line.to_string()
@@ -467,11 +467,26 @@ impl App {
             let wrap_opts = WrapOptions::new(COMMENT_WRAP).break_words(false);
             for (idx, comment) in thread.comments.iter().enumerate() {
                 if idx > 0 {
-                    writeln!(buf)?;
+                    // writeln!(buf)?;
                 }
-                writeln!(
-                    buf,
-                    "{}  {}",
+                // writeln!(
+                //     buf,
+                //     "{} {} {}",
+                //     "╭".dark_grey(),
+                //     comment
+                //         .author
+                //         .as_str()
+                //         .with(Color::Rgb {
+                //             r: 120,
+                //             g: 200,
+                //             b: 220
+                //         })
+                //         .bold(),
+                //     humanize_relative(now, comment.created_at).with(muted)
+                // )?;
+                let mut body_lines = Vec::new();
+                body_lines.push(format!(
+                    "{} {}",
                     comment
                         .author
                         .as_str()
@@ -482,8 +497,7 @@ impl App {
                         })
                         .bold(),
                     humanize_relative(now, comment.created_at).with(muted)
-                )?;
-                let mut body_lines = Vec::new();
+                ));
                 for line in comment.body.lines() {
                     if line.trim().is_empty() {
                         body_lines.push(String::new());
@@ -505,7 +519,7 @@ impl App {
                     "{} replies queued – press p to publish",
                     self.queued_replies.len()
                 )
-                .with(Color::DarkYellow)
+                .with(Color::DarkMagenta)
             )?;
         }
         writeln!(
@@ -518,7 +532,7 @@ impl App {
             .with(Color::DarkGrey)
         )?;
         if let Some(message) = &self.status_line {
-            writeln!(buf, "{}", message.as_str().with(Color::Yellow))?;
+            writeln!(buf, "{}", message.as_str().with(Color::DarkGrey))?;
         }
         Ok(())
     }
@@ -750,12 +764,15 @@ impl App {
 fn build_reply_editor_template(thread: &Thread) -> String {
     let mut buf = String::from("\n\n");
     let now = Utc::now();
-    let status = if thread.is_resolved { "resolved" } else { "open" };
+    let status = if thread.is_resolved {
+        "resolved"
+    } else {
+        "open"
+    };
     let _ = writeln!(
         buf,
         "# Reply to the thread on {} ({} status).",
-        thread.path,
-        status
+        thread.path, status
     );
     let _ = writeln!(
         buf,
@@ -1116,11 +1133,18 @@ fn render_block(buf: &mut String, lines: &[String]) -> std::fmt::Result {
         writeln!(buf, "{}", "│".with(Color::DarkGrey))?;
         return Ok(());
     }
-    for line in lines {
+    for (i, line) in lines.iter().enumerate() {
+        let block = match i {
+            0 if lines.len() == 1 => "",
+            0 if lines.len() > 1 => "╭",
+            _ if i + 1 == lines.len() => "╰",
+            _ => "│",
+        };
+
         if line.is_empty() {
-            writeln!(buf, "{}", "│".with(Color::DarkGrey))?;
+            writeln!(buf, "{}", block.with(Color::DarkGrey))?;
         } else {
-            writeln!(buf, "{} {}", "│".with(Color::DarkGrey), line)?;
+            writeln!(buf, "{} {}", block.with(Color::DarkGrey), line)?;
         }
     }
     Ok(())
@@ -1277,48 +1301,6 @@ fn sanitize_editor_contents(raw: &str) -> Option<String> {
     if trimmed.is_empty() {
         None
     } else {
-        Some(wrap_reply_body(trimmed))
+        Some(trimmed.to_owned())
     }
-}
-
-fn wrap_reply_body(body: &str) -> String {
-    let wrap_opts = WrapOptions::new(COMMENT_WRAP).break_words(false);
-    let mut result = Vec::new();
-    let mut paragraph: Vec<&str> = Vec::new();
-    let mut pending_blank = false;
-
-    for line in body.lines() {
-        if line.trim().is_empty() {
-            if !paragraph.is_empty() {
-                let merged = paragraph.join(" ");
-                for chunk in wrap(merged.as_str(), wrap_opts.clone()) {
-                    result.push(chunk.into_owned());
-                }
-                paragraph.clear();
-            }
-            pending_blank = true;
-        } else {
-            if pending_blank && !result.is_empty() && !result.last().unwrap().is_empty() {
-                result.push(String::new());
-            }
-            pending_blank = false;
-            paragraph.push(line.trim());
-        }
-    }
-
-    if !paragraph.is_empty() {
-        if pending_blank && !result.is_empty() && !result.last().unwrap().is_empty() {
-            result.push(String::new());
-        }
-        let merged = paragraph.join(" ");
-        for chunk in wrap(merged.as_str(), wrap_opts) {
-            result.push(chunk.into_owned());
-        }
-    }
-
-    while matches!(result.last(), Some(line) if line.is_empty()) {
-        result.pop();
-    }
-
-    result.join("\n")
 }
