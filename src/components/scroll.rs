@@ -1,8 +1,6 @@
-use std::fmt::Write;
 use std::isize;
 
 use anyhow::Result;
-use chrono::Utc;
 use crossterm::{
     event::{Event, KeyCode, MouseEventKind},
     terminal::size,
@@ -37,8 +35,7 @@ impl Component for Scroll {
         })
     }
 
-    fn render(&self, buf: &mut String) -> Result<()> {
-        writeln!(buf, "{}", Utc::now())?;
+    fn render(&self, _buf: &mut String, _app: &App) -> Result<()> {
         Ok(())
     }
 }

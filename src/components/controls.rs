@@ -13,7 +13,7 @@ impl Component for Controls {
         Ok(Tick::Noop)
     }
 
-    fn render(&self, _buf: &mut String) -> Result<()> {
+    fn render(&self, _buf: &mut String, app: &App) -> Result<()> {
         Ok(())
     }
 }

@@ -7,9 +7,9 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct CtrlC;
+pub struct Quit;
 
-impl Component for CtrlC {
+impl Component for Quit {
     fn tick(&mut self, _app: &mut App, event: &Event) -> Result<Tick> {
         if let Event::Key(key) = event
             && key.code == KeyCode::Char('c')
@@ -17,10 +17,17 @@ impl Component for CtrlC {
         {
             return Ok(Tick::Exit);
         }
+
+        if let Event::Key(key) = event
+            && key.code == KeyCode::Char('q')
+        {
+            return Ok(Tick::Exit);
+        }
+
         Ok(Tick::Noop)
     }
 
-    fn render(&self, _buf: &mut String) -> Result<()> {
+    fn render(&self, _buf: &mut String, _app: &App) -> Result<()> {
         Ok(())
     }
 }

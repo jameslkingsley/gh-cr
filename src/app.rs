@@ -10,12 +10,20 @@ use crossterm::{
     execute,
     terminal::{Clear, ClearType, size},
 };
-use tokio::task::yield_now;
+use tokio::{task::yield_now, time::Instant};
 
-use crate::components::{Component, CtrlC, Scroll};
+use crate::{
+    color_scheme::ColorScheme,
+    components::{Component, Quit, Resize, Scroll},
+    github::{GitHub, Initialised},
+    threads::Threads,
+};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct App {
+    pub github: GitHub<Initialised>,
+    pub color_scheme: ColorScheme,
+    timer: Instant,
     view: View,
     scroll_offset: usize,
 }
@@ -33,16 +41,37 @@ pub enum Tick {
     Noop,
 }
 
+type Components = Vec<Box<dyn Component>>;
+
 impl App {
+    pub async fn new(github: GitHub<Initialised>, color_scheme: ColorScheme) -> Result<Self> {
+        Ok(Self {
+            github,
+            color_scheme,
+            timer: Instant::now(),
+            view: View::default(),
+            scroll_offset: 0,
+        })
+    }
+
     pub async fn run(&mut self) -> Result<()> {
-        let mut components: Vec<Box<dyn Component>> = match self.view {
-            View::Threads => vec![Box::new(CtrlC), Box::new(Scroll)],
-            View::Review => vec![Box::new(CtrlC), Box::new(Scroll)],
+        let mut components: Components = match self.view {
+            View::Threads => vec![
+                Box::new(Quit),
+                Box::new(Scroll),
+                Box::new(Resize),
+                Box::new(Threads::default()),
+            ],
+            View::Review => vec![Box::new(Quit), Box::new(Scroll), Box::new(Resize)],
         };
 
         let mut render = true;
 
         'outer: loop {
+            for component in components.iter_mut() {
+                component.tick_async(self).await?;
+            }
+
             if poll(Duration::from_millis(100))? {
                 let event = read()?;
 
@@ -59,10 +88,12 @@ impl App {
                 let mut buf = String::with_capacity(1024);
 
                 for component in &components {
-                    component.render(&mut buf)?;
+                    component.render(&mut buf, self)?;
                 }
 
                 self.render(buf)?;
+
+                self.timer = Instant::now();
             }
 
             render = false;
@@ -83,12 +114,22 @@ impl App {
         Tick::Render
     }
 
+    /// Delta time since last render
+    pub fn delta(&self) -> Duration {
+        self.timer.elapsed()
+    }
+
     fn render(&mut self, buf: String) -> Result<()> {
         let mut out = stdout();
 
         execute!(out, MoveTo(0, 0), Clear(ClearType::All))?;
 
-        let lines: Vec<&str> = buf.lines().collect();
+        let mut lines: Vec<&str> = buf.lines().collect();
+
+        // Add top and bottom padding
+        lines.insert(0, "");
+        lines.push("");
+
         let (_, height) = size()?;
         let viewport = height as usize;
 
