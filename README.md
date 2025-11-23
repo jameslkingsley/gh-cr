@@ -32,3 +32,9 @@ gh extension install jameslkingsley/gh-cr
 - r: write a reply (opens $EDITOR)
 - p: publish queued replies
 - q: quit
+
+## Roadmap
+
+- Comment on diff hunks
+- Add comment reactions
+- Mark comments as resolved
