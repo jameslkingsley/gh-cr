@@ -29,6 +29,7 @@ use crate::{
 };
 
 // TODO Use ratatui
+//      Compare by commits option
 
 pub async fn run_app(app: Arc<RwLock<App>>) -> Result<()> {
     {
