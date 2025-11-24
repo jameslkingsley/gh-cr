@@ -1,9 +1,16 @@
 mod service;
 
-use std::{convert::Infallible, marker::PhantomData, mem};
+use std::{
+    convert::Infallible,
+    ops::{Deref, DerefMut},
+};
 
 use anyhow::Result;
-use octocrab::{AuthState, Octocrab, OctocrabBuilder, pulls::PullRequestHandler};
+use octocrab::{
+    AuthState, Octocrab, OctocrabBuilder,
+    models::{Repository, pulls::PullRequest},
+    pulls::PullRequestHandler,
+};
 
 use service::GitHubCLI;
 
@@ -16,27 +23,45 @@ pub fn build_octocrab_client() -> Result<Octocrab, Infallible> {
 
 #[derive(Debug)]
 pub struct GitHub<State = Pending> {
-    owner: String,
-    repo: String,
-    pr: i64,
-    client: Octocrab,
-    _state: PhantomData<State>,
+    state: State,
 }
 
 #[derive(Debug)]
-pub struct Pending;
+pub struct Pending {
+    owner: String,
+    repo: String,
+    pr: u64,
+}
 
 #[derive(Debug)]
-pub struct Initialised;
+pub struct Initialised {
+    pub repo: Repository,
+    pub pr: PullRequest,
+    client: Octocrab,
+}
+
+impl<T> Deref for GitHub<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl<T> DerefMut for GitHub<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
+}
 
 impl GitHub<Pending> {
     pub fn new() -> Self {
         Self {
-            owner: String::new(),
-            repo: String::new(),
-            pr: 0,
-            client: build_octocrab_client().expect("octocrab builder infallible"),
-            _state: PhantomData,
+            state: Pending {
+                owner: String::new(),
+                repo: String::new(),
+                pr: 0,
+            },
         }
     }
 
@@ -50,22 +75,33 @@ impl GitHub<Pending> {
         self
     }
 
-    pub fn pr(mut self, pr: i64) -> Self {
+    pub fn pr(mut self, pr: u64) -> Self {
         self.pr = pr;
         self
     }
 
-    pub fn build(self) -> GitHub<Initialised> {
-        unsafe { mem::transmute(self) }
+    pub async fn build(self) -> Result<GitHub<Initialised>> {
+        let client = build_octocrab_client().expect("octocrab builder infallible");
+
+        let repo = client.repos(&self.owner, &self.repo).get().await?;
+        let pr = client.pulls(&self.owner, &self.repo).get(self.pr).await?;
+
+        Ok(GitHub {
+            state: Initialised { repo, pr, client },
+        })
     }
 }
 
 impl GitHub<Initialised> {
-    pub fn pr(&self) -> u64 {
-        self.pr as u64
-    }
-
     pub fn pulls(&self) -> PullRequestHandler<'_> {
-        self.client.pulls(&self.owner, &self.repo)
+        self.client.pulls(
+            self.repo
+                .owner
+                .as_ref()
+                .expect("invalid repo")
+                .login
+                .as_str(),
+            self.repo.name.as_str(),
+        )
     }
 }

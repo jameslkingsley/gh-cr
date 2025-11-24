@@ -1,20 +1,24 @@
 use std::{
+    env, fs,
     io::{Write, stdout},
+    process::Command,
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use crossterm::{
     cursor::MoveTo,
     event::{poll, read},
     execute,
     terminal::{Clear, ClearType, size},
 };
+use tempfile::NamedTempFile;
 use tokio::{task::yield_now, time::Instant};
 
 use crate::{
+    Terminal,
     color_scheme::ColorScheme,
-    components::{Component, Quit, Resize, Scroll},
+    components::{Component, Header, Quit, Resize, Scroll},
     github::{GitHub, Initialised},
     threads::Threads,
 };
@@ -22,6 +26,7 @@ use crate::{
 #[derive(Debug)]
 pub struct App {
     pub github: GitHub<Initialised>,
+    pub terminal: Terminal,
     pub color_scheme: ColorScheme,
     timer: Instant,
     view: View,
@@ -32,7 +37,6 @@ pub struct App {
 pub enum View {
     #[default]
     Threads,
-    Review,
 }
 
 pub enum Tick {
@@ -44,9 +48,14 @@ pub enum Tick {
 type Components = Vec<Box<dyn Component>>;
 
 impl App {
-    pub async fn new(github: GitHub<Initialised>, color_scheme: ColorScheme) -> Result<Self> {
+    pub async fn new(
+        github: GitHub<Initialised>,
+        terminal: Terminal,
+        color_scheme: ColorScheme,
+    ) -> Result<Self> {
         Ok(Self {
             github,
+            terminal,
             color_scheme,
             timer: Instant::now(),
             view: View::default(),
@@ -55,14 +64,16 @@ impl App {
     }
 
     pub async fn run(&mut self) -> Result<()> {
+        self.terminal.enter()?;
+
         let mut components: Components = match self.view {
             View::Threads => vec![
                 Box::new(Quit),
                 Box::new(Scroll),
                 Box::new(Resize),
+                Box::new(Header),
                 Box::new(Threads::default()),
             ],
-            View::Review => vec![Box::new(Quit), Box::new(Scroll), Box::new(Resize)],
         };
 
         let mut render = true;
@@ -101,7 +112,30 @@ impl App {
             yield_now().await;
         }
 
+        self.terminal.leave()?;
+
         Ok(())
+    }
+
+    pub fn suspend_for_editor(&self, initial_contents: String) -> Result<String> {
+        self.terminal.leave()?;
+
+        let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+
+        let mut tempfile = NamedTempFile::new()?;
+        tempfile.write_all(initial_contents.as_bytes())?;
+        tempfile.flush()?;
+
+        let status = Command::new(&editor).arg(tempfile.path()).status()?;
+        if !status.success() {
+            return Err(anyhow!("editor exited with {}", status));
+        }
+
+        let body = fs::read_to_string(tempfile.path())?;
+
+        self.terminal.enter()?;
+
+        Ok(body)
     }
 
     pub fn scroll(&mut self, step: isize) -> Tick {
@@ -151,6 +185,8 @@ impl App {
         {
             let y = row as u16;
             execute!(out, MoveTo(0, y))?;
+            // TODO Config option for indent
+            out.write_all("  ".as_bytes())?;
             out.write_all(line.as_bytes())?;
         }
 

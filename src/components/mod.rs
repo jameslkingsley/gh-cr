@@ -1,4 +1,4 @@
-mod controls;
+mod header;
 mod quit;
 mod resize;
 mod scroll;
@@ -8,7 +8,7 @@ use std::{fmt::Debug, pin::Pin};
 use anyhow::Result;
 use crossterm::event::Event;
 
-pub use controls::*;
+pub use header::*;
 pub use quit::*;
 pub use resize::*;
 pub use scroll::*;
@@ -16,7 +16,9 @@ pub use scroll::*;
 use crate::app::{App, Tick};
 
 pub trait Render {
-    fn render(&self, buf: &mut String, app: &App) -> Result<()>;
+    type Context;
+
+    fn render(&self, buf: &mut String, app: &App, ctx: Self::Context) -> Result<()>;
 }
 
 pub trait Component: Debug {

@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::fmt::{Display, Write};
 
 use crossterm::style::{Color, Stylize};
 
@@ -26,4 +26,12 @@ pub fn write_stylized_block(buf: &mut String, block: String, color: Color) -> st
     }
 
     Ok(())
+}
+
+pub fn hyperlink<Text: Display, Url: Display>(
+    buf: &mut String,
+    text: Text,
+    url: Url,
+) -> Result<(), std::fmt::Error> {
+    write!(buf, "\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
 }
