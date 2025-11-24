@@ -10,7 +10,7 @@ use crate::{
 pub struct Quit;
 
 impl Component for Quit {
-    fn tick(&mut self, _app: &mut App, event: &Event) -> Result<Tick> {
+    fn tick(&mut self, _app: &App, event: &Event) -> Result<Tick> {
         if let Event::Key(key) = event
             && key.code == KeyCode::Char('c')
             && key.modifiers.contains(KeyModifiers::CONTROL)

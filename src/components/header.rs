@@ -14,7 +14,7 @@ use crate::{
 pub struct Header;
 
 impl Component for Header {
-    fn tick(&mut self, _app: &mut App, _event: &Event) -> Result<Tick> {
+    fn tick(&mut self, _app: &App, _event: &Event) -> Result<Tick> {
         Ok(Tick::Noop)
     }
 

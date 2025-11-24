@@ -1,8 +1,12 @@
-use std::{collections::HashMap, fmt::Write, pin::Pin};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap, VecDeque},
+    fmt::Write,
+    pin::Pin,
+};
 
-use anyhow::Result;
-use chrono::TimeDelta;
-use chrono_humanize::Humanize;
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
 use crossterm::{
     event::{Event, KeyCode, KeyModifiers},
     style::Stylize,
@@ -14,95 +18,147 @@ use octocrab::{
 
 use crate::{
     app::{App, Tick},
-    components::{Component, Render},
+    components::{CommentContext, Component, Render},
     utils::write_stylized_block,
 };
 
-type Comments = Vec<Comment>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreadKey {
+    id: CommentId,
+    ts: DateTime<Utc>,
+}
+
+impl Ord for ThreadKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.ts.cmp(&other.ts)
+    }
+}
+
+impl PartialOrd for ThreadKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 #[derive(Debug)]
 pub struct Threads {
-    current_thread: usize,
+    threads: BTreeMap<ThreadKey, Vec<Comment>>,
+    comment_queue: VecDeque<PendingComment>,
+    current_thread: Option<ThreadKey>,
     current_comment: Option<usize>,
-    threads: Vec<Comments>,
     stale: bool,
+}
+
+#[derive(Debug)]
+pub struct PendingComment {
+    pub in_reply_to: CommentId,
+    pub content: String,
 }
 
 impl Default for Threads {
     fn default() -> Self {
         Self {
-            current_thread: 0,
+            threads: BTreeMap::new(),
+            comment_queue: VecDeque::new(),
+            current_thread: None,
             current_comment: None,
-            threads: Vec::new(),
             stale: true,
         }
     }
 }
 
 impl Threads {
-    pub async fn _reply(&self) -> Result<()> {
+    pub fn queue_reply(&mut self, comment: PendingComment) -> Result<()> {
+        self.comment_queue.push_back(comment);
         Ok(())
     }
-}
 
-#[derive(Debug)]
-pub struct CommentContext {
-    is_selected: bool,
-}
+    pub fn current_thread_index(&self) -> Result<usize> {
+        let (thread_key, _) = self.current_thread()?;
+        self.threads
+            .iter()
+            .position(|(k, _)| k == thread_key)
+            .ok_or_else(|| anyhow!("Thread not found"))
+    }
 
-impl Render for Comment {
-    type Context = CommentContext;
+    pub fn current_thread(&self) -> Result<(&ThreadKey, &[Comment])> {
+        let Some(current) = &self.current_thread else {
+            return Err(anyhow!("Current thread is None"));
+        };
 
-    fn render(&self, buf: &mut String, app: &App, ctx: Self::Context) -> Result<()> {
-        let mut comment = String::with_capacity(self.body.len());
+        self.threads
+            .get_key_value(&current)
+            .map(|(k, v)| (k, v.as_slice()))
+            .ok_or_else(|| anyhow!("Thread not found"))
+    }
 
-        let time_delta = TimeDelta::from_std(app.delta())?;
+    pub fn next_thread(&mut self) -> Result<()> {
+        match self.threads.iter().nth(self.current_thread_index()? + 1) {
+            Some((next, _)) => self.current_thread.replace(*next),
+            None => self.current_thread.replace(
+                self.threads
+                    .first_key_value()
+                    .map(|(k, _)| *k)
+                    .ok_or_else(|| anyhow!("threads empty"))?,
+            ),
+        };
 
-        write!(
-            comment,
-            "{} {}\n",
-            self.user
-                .as_ref()
-                .map(|a| a.login.as_str())
-                .unwrap_or_else(|| "(unknown)")
-                .with(app.color_scheme.author.into()),
-            self.created_at
-                .checked_add_signed(time_delta)
-                .unwrap_or(self.created_at)
-                .humanize()
-                .with(app.color_scheme.muted.into()),
-        )?;
+        self.current_comment = None;
 
-        for line in textwrap::wrap(&self.body, 80) {
-            writeln!(
-                comment,
-                "{}",
-                line.with(app.color_scheme.comment_body.into())
-            )?;
-        }
+        Ok(())
+    }
 
-        write_stylized_block(
-            buf,
-            comment,
-            if ctx.is_selected {
-                app.color_scheme.border_active.into()
-            } else {
-                app.color_scheme.border.into()
-            },
-        )?;
+    pub fn prev_thread(&mut self) -> Result<()> {
+        let prev_index = self
+            .current_thread_index()?
+            .checked_sub(1)
+            .unwrap_or(self.threads.len() - 1);
+
+        match self.threads.iter().nth(prev_index) {
+            Some((prev, _)) => self.current_thread.replace(*prev),
+            None => self.current_thread.replace(
+                self.threads
+                    .last_key_value()
+                    .map(|(k, _)| *k)
+                    .ok_or_else(|| anyhow!("threads empty"))?,
+            ),
+        };
+
+        self.current_comment = None;
+
+        Ok(())
+    }
+
+    pub fn next_comment(&mut self) -> Result<()> {
+        let (_, comments) = self.current_thread()?;
+
+        self.current_comment = Some(match self.current_comment {
+            Some(i) => (i + 1) % comments.len(),
+            None => 0,
+        });
+
+        Ok(())
+    }
+
+    pub fn prev_comment(&mut self) -> Result<()> {
+        let (_, comments) = self.current_thread()?;
+
+        self.current_comment = Some(match self.current_comment {
+            Some(i) => (i + comments.len() - 1) % comments.len(),
+            None => comments.len() - 1,
+        });
 
         Ok(())
     }
 }
 
 impl Component for Threads {
-    fn tick(&mut self, app: &mut App, event: &Event) -> Result<Tick> {
+    fn tick(&mut self, app: &App, event: &Event) -> Result<Tick> {
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right
         {
-            self.current_thread = (self.current_thread + 1) % self.threads.len();
-            self.current_comment = None;
+            self.next_thread()?;
             return Ok(Tick::Render);
         }
 
@@ -110,9 +166,7 @@ impl Component for Threads {
         if let Event::Key(key) = event
             && key.code == KeyCode::Left
         {
-            self.current_thread =
-                (self.current_thread + self.threads.len() - 1) % self.threads.len();
-            self.current_comment = None;
+            self.prev_thread()?;
             return Ok(Tick::Render);
         }
 
@@ -121,10 +175,7 @@ impl Component for Threads {
             && key.code == KeyCode::Down
             && key.modifiers.contains(KeyModifiers::ALT)
         {
-            self.current_comment = Some(match self.current_comment {
-                Some(i) => (i + 1) % self.threads[self.current_thread].len(),
-                None => 0,
-            });
+            self.next_comment()?;
             return Ok(Tick::Render);
         }
 
@@ -133,13 +184,7 @@ impl Component for Threads {
             && key.code == KeyCode::Up
             && key.modifiers.contains(KeyModifiers::ALT)
         {
-            self.current_comment = Some(match self.current_comment {
-                Some(i) => {
-                    (i + self.threads[self.current_thread].len() - 1)
-                        % self.threads[self.current_thread].len()
-                }
-                None => self.threads[self.current_thread].len() - 1,
-            });
+            self.prev_comment()?;
             return Ok(Tick::Render);
         }
 
@@ -147,7 +192,14 @@ impl Component for Threads {
         if let Event::Key(key) = event
             && key.code == KeyCode::Char('r')
         {
-            let _body = app.suspend_for_editor("initial_contents".to_string())?;
+            let (thread_key, _) = self.current_thread()?;
+            let _shift_held = key.modifiers.contains(KeyModifiers::SHIFT);
+            // TODO: Set initial contents to comment thread
+            let content = app.suspend_for_editor(String::new())?;
+            self.queue_reply(PendingComment {
+                in_reply_to: thread_key.id,
+                content,
+            })?;
             return Ok(Tick::Render);
         }
 
@@ -155,13 +207,8 @@ impl Component for Threads {
     }
 
     fn render(&self, buf: &mut String, app: &App) -> Result<()> {
-        let Some(comments) = self.threads.get(self.current_thread) else {
-            return Ok(());
-        };
-
-        let Some(first) = comments.first() else {
-            return Ok(());
-        };
+        let (_, comments) = self.current_thread()?;
+        let first = &comments[0];
 
         writeln!(buf)?;
 
@@ -228,16 +275,24 @@ impl Component for Threads {
         write!(controls, "  (q)uit")?;
 
         let thread_count = self.threads.len();
-        let current_thread = self.current_thread + 1;
+        let current_thread = self.current_thread_index()?;
         write!(
             controls,
             "  {}/{} thread{}",
-            current_thread,
+            current_thread + 1,
             thread_count,
             if thread_count > 1 { "s" } else { "" }
         )?;
 
         writeln!(buf, "{}", controls.with(app.color_scheme.muted.into()))?;
+
+        for pending_comment in self.comment_queue.iter() {
+            writeln!(
+                buf,
+                "- {} -> {}",
+                pending_comment.in_reply_to, pending_comment.content
+            )?;
+        }
 
         Ok(())
     }
@@ -277,17 +332,19 @@ impl Component for Threads {
                     }
                 }
 
-                self.threads = Vec::with_capacity(threads.len());
-
-                for (_, mut comments) in threads {
+                for (thread_id, mut comments) in threads {
                     assert!(!comments.is_empty());
                     comments.sort_unstable_by_key(|c| c.created_at);
-                    self.threads.push(comments);
-                }
 
-                self.threads.sort_unstable_by_key(|t| {
-                    t.iter().min_by_key(|c| c.created_at).map(|c| c.created_at)
-                });
+                    let key = ThreadKey {
+                        id: thread_id,
+                        ts: comments[0].created_at,
+                    };
+
+                    self.current_thread.get_or_insert(key);
+
+                    self.threads.insert(key, comments);
+                }
 
                 self.stale = false;
             }

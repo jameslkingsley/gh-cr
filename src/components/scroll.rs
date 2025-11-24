@@ -15,7 +15,7 @@ use crate::{
 pub struct Scroll;
 
 impl Component for Scroll {
-    fn tick(&mut self, app: &mut App, event: &Event) -> Result<Tick> {
+    fn tick(&mut self, app: &App, event: &Event) -> Result<Tick> {
         Ok(match event {
             Event::Key(key) => match key.code {
                 KeyCode::Down if key.modifiers.is_empty() => app.scroll(1),

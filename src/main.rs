@@ -10,11 +10,11 @@ use crossterm::{
     },
 };
 use serde_json::Value;
-use std::{ffi::OsStr, io::stdout};
-use tokio::process::Command;
+use std::{ffi::OsStr, io::stdout, sync::Arc};
+use tokio::{process::Command, sync::RwLock};
 
 use crate::{
-    app::App,
+    app::{App, run_app},
     color_scheme::{ColorScheme, Rgb},
     github::GitHub,
 };
@@ -106,9 +106,9 @@ async fn main() -> Result<()> {
         diff_unchanged: Rgb(51, 53, 68),
     };
 
-    let mut app = App::new(github, terminal, color_scheme).await?;
+    let app = Arc::new(RwLock::new(App::new(github, terminal, color_scheme).await?));
 
-    app.run().await?;
+    run_app(app).await?;
 
     Ok(())
 }

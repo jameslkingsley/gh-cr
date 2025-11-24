@@ -10,7 +10,7 @@ use crate::{
 pub struct Resize;
 
 impl Component for Resize {
-    fn tick(&mut self, _app: &mut App, event: &Event) -> Result<Tick> {
+    fn tick(&mut self, _app: &App, event: &Event) -> Result<Tick> {
         if let Event::Resize(_, _) = event {
             return Ok(Tick::Render);
         }
