@@ -715,17 +715,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "gh-cr"
-version = "0.0.1"
+name = "github"
+version = "0.1.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "bytes",
  "chrono",
  "chrono-humanize",
- "clap",
- "crossterm",
- "dirs-next",
  "futures",
  "futures-util",
  "http",
@@ -735,9 +731,7 @@ dependencies = [
  "octocrab",
  "serde",
  "serde_json",
- "tempfile",
  "testresult",
- "textwrap",
  "tokio",
  "tower",
 ]
@@ -1014,6 +1008,15 @@ checksum = "3acae9609540aa318d1bc588455225fb2085b9ed0c4f6bd0d9d5bcd86f1a0344"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "inventory"
+version = "0.3.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc61209c082fbeb19919bee74b176221b27223e27b65d781eb91af24eb1fb46e"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -1923,9 +1926,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.110"
+version = "2.0.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a99801b5bd34ede4cf3fc688c5919368fea4e4814a4664359503e6015b280aea"
+checksum = "390cc9a294ab71bdb1aa2e99d13be9c753cd2d7bd6560c77118597410c4d2e87"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1960,6 +1963,29 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "terminal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "chrono",
+ "chrono-humanize",
+ "clap",
+ "crossterm",
+ "dirs-next",
+ "futures",
+ "futures-util",
+ "github",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "testresult",
+ "textwrap",
+ "tokio",
 ]
 
 [[package]]

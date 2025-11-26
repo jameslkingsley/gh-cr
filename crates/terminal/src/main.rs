@@ -13,19 +13,23 @@ use serde_json::Value;
 use std::{ffi::OsStr, io::stdout, sync::Arc};
 use tokio::{process::Command, sync::RwLock};
 
-use crate::{
-    app::{App, run_app},
-    color_scheme::{ColorScheme, Rgb},
-    github::GitHub,
-};
+use github::GitHub;
+
+use crate::app::{App, run_app};
+
+// use crate::{
+// app::{App, run_app},
+// color_scheme::{ColorScheme, Rgb},
+// };
 
 mod app;
-mod color_scheme;
-mod components;
-mod github;
-mod review;
-mod threads;
-mod utils;
+// mod color_scheme;
+// mod components;
+// mod review;
+// mod threads;
+// mod utils;
+mod keybinds;
+mod widgets;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -94,19 +98,19 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    let color_scheme = ColorScheme {
-        pr_title: Rgb(208, 208, 208),
-        muted: Rgb(51, 53, 68),
-        author: Rgb(18, 207, 192),
-        comment_body: Rgb(208, 208, 208),
-        border: Rgb(51, 53, 68),
-        border_active: Rgb(18, 207, 192),
-        diff_added: Rgb(218, 255, 166),
-        diff_removed: Rgb(246, 144, 144),
-        diff_unchanged: Rgb(51, 53, 68),
-    };
+    // let color_scheme = ColorScheme {
+    //     pr_title: Rgb(208, 208, 208),
+    //     muted: Rgb(51, 53, 68),
+    //     author: Rgb(18, 207, 192),
+    //     comment_body: Rgb(208, 208, 208),
+    //     border: Rgb(51, 53, 68),
+    //     border_active: Rgb(18, 207, 192),
+    //     diff_added: Rgb(218, 255, 166),
+    //     diff_removed: Rgb(246, 144, 144),
+    //     diff_unchanged: Rgb(51, 53, 68),
+    // };
 
-    let app = Arc::new(RwLock::new(App::new(github, terminal, color_scheme).await?));
+    let app = App::new(github, terminal).await?;
 
     run_app(app).await?;
 

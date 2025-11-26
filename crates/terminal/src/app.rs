@@ -10,112 +10,76 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use arc_swap::ArcSwap;
 use crossterm::{
     cursor::MoveTo,
     event::{poll, read},
     execute,
     terminal::{Clear, ClearType, size},
 };
+use github::{GitHub, Initialised};
 use tempfile::NamedTempFile;
 use tokio::{sync::RwLock, task::yield_now, time::Instant};
 
 use crate::{
     Terminal,
-    color_scheme::ColorScheme,
-    components::{Component, Header, Quit, Resize, Scroll},
-    github::{GitHub, Initialised},
-    threads::Threads,
+    widgets::{Example, Widget},
+    // color_scheme::ColorScheme,
+    // components::{Component, Header, Quit, Resize, Scroll},
+    // github::{GitHub, Initialised},
+    // threads::Threads,
 };
 
 // TODO Use ratatui
 //      Compare by commits option
 
-pub async fn run_app(app: Arc<RwLock<App>>) -> Result<()> {
-    {
-        app.read().await.terminal.enter()?;
-    }
+pub async fn run_app(mut app: App) -> Result<()> {
+    app.terminal.enter()?;
 
-    // TODO: Toggle view
-    // let mut components: Components = match self.view {
-    //     View::Threads => vec![
-    //         Box::new(Quit),
-    //         Box::new(Scroll),
-    //         Box::new(Resize),
-    //         Box::new(Header),
-    //         Box::new(Threads::default()),
-    //     ],
-    // };
+    // let background_tick = tokio::spawn(async move {
+    //     loop {
+    //         let app_guard = app_ptr.read().await;
 
-    let app_ptr = app.clone();
-    let background_tick = tokio::spawn(async move {
-        loop {
-            let app_guard = app_ptr.read().await;
+    //         if app_guard.do_async_tick.load(Ordering::Relaxed) {
+    //             for component in app_guard.components.load().iter() {
+    //                 let mut guard = component.write().await;
+    //                 guard.tick_async(&*app_guard).await.unwrap();
+    //             }
 
-            if app_guard.do_async_tick.load(Ordering::Relaxed) {
-                for component in app_guard.components.load().iter() {
-                    let mut guard = component.write().await;
-                    guard.tick_async(&*app_guard).await.unwrap();
-                }
+    //             app_guard.do_async_tick.swap(false, Ordering::Relaxed);
+    //         }
 
-                app_guard.do_async_tick.swap(false, Ordering::Relaxed);
-            }
+    //         drop(app_guard);
 
-            drop(app_guard);
+    //         tokio::time::sleep(Duration::from_millis(100)).await;
+    //     }
+    // });
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    });
-
-    'outer: loop {
-        // for component in components.iter_mut() {
-        //     component.tick_async(app).await?;
-        // }
-
+    'main: loop {
         if poll(Duration::from_millis(100))? {
             let event = read()?;
-            let app_guard = app.read().await;
 
-            for component in app_guard.components.load().iter() {
-                let mut guard = component.write().await;
-                match guard.tick(&*app_guard, &event)? {
-                    Tick::Exit => break 'outer,
-                    Tick::Render => {
-                        app_guard.render.swap(true, Ordering::Relaxed);
-                    }
-                    Tick::Noop => {}
+            for widget in &mut app.widgets {
+                if widget.tick(&event)? {
+                    break 'main;
                 }
             }
         }
 
-        if app.read().await.render.load(Ordering::Relaxed) {
-            let buf = {
-                let mut buf = String::with_capacity(1024);
-                let app_guard = app.read().await;
+        let buf = {
+            let mut buf = String::with_capacity(1024);
+            for widget in &app.widgets {
+                widget.render(&mut buf)?;
+            }
+            buf
+        };
 
-                for component in app_guard.components.load().iter() {
-                    let guard = component.read().await;
-                    guard.render(&mut buf, &*app_guard)?;
-                }
-                buf
-            };
-
-            let mut app_guard = app.write().await;
-
-            app_guard.render(buf)?;
-            app_guard.timer = Instant::now();
-        }
-
-        app.read().await.render.swap(false, Ordering::Relaxed);
+        app.render(buf)?;
+        app.timer = Instant::now();
 
         yield_now().await;
     }
 
-    background_tick.abort();
-
-    {
-        app.read().await.terminal.leave()?;
-    }
+    app.terminal.leave()?;
 
     Ok(())
 }
@@ -124,8 +88,7 @@ pub async fn run_app(app: Arc<RwLock<App>>) -> Result<()> {
 pub struct App {
     pub github: GitHub<Initialised>,
     pub terminal: Terminal,
-    pub color_scheme: ColorScheme,
-    components: Components,
+    pub widgets: Vec<Box<dyn Widget>>,
     timer: Instant,
     view: View,
     scroll_offset: AtomicUsize,
@@ -145,25 +108,12 @@ pub enum Tick {
     Noop,
 }
 
-type Components = ArcSwap<Vec<Arc<RwLock<dyn Component>>>>;
-
 impl App {
-    pub async fn new(
-        github: GitHub<Initialised>,
-        terminal: Terminal,
-        color_scheme: ColorScheme,
-    ) -> Result<Self> {
+    pub async fn new(github: GitHub<Initialised>, terminal: Terminal) -> Result<Self> {
         Ok(Self {
             github,
             terminal,
-            color_scheme,
-            components: ArcSwap::new(Arc::new(vec![
-                Arc::new(RwLock::new(Quit)),
-                Arc::new(RwLock::new(Scroll)),
-                Arc::new(RwLock::new(Resize)),
-                Arc::new(RwLock::new(Header)),
-                Arc::new(RwLock::new(Threads::default())),
-            ])),
+            widgets: vec![Box::new(Example::default())],
             timer: Instant::now(),
             view: View::default(),
             scroll_offset: AtomicUsize::new(0),
