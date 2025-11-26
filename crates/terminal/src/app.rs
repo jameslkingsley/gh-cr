@@ -12,13 +12,20 @@ use std::{
 use anyhow::{Result, anyhow};
 use crossterm::{
     cursor::MoveTo,
-    event::{poll, read},
+    event::{Event, EventStream, poll, read},
     execute,
     terminal::{Clear, ClearType, size},
 };
+use futures::{FutureExt, StreamExt};
+use futures_timer::Delay;
 use github::{GitHub, Initialised};
 use tempfile::NamedTempFile;
-use tokio::{sync::RwLock, task::yield_now, time::Instant};
+use tokio::{
+    select,
+    sync::{RwLock, mpsc::unbounded_channel},
+    task::yield_now,
+    time::Instant,
+};
 
 use crate::{
     Terminal,
@@ -32,49 +39,42 @@ use crate::{
 // TODO Use ratatui
 //      Compare by commits option
 
+#[derive(Debug)]
+pub struct Context {
+    //
+}
+
 pub async fn run_app(mut app: App) -> Result<()> {
     app.terminal.enter()?;
 
-    // let background_tick = tokio::spawn(async move {
-    //     loop {
-    //         let app_guard = app_ptr.read().await;
+    // let (async_tx, async_rx) = unbounded_channel();
 
-    //         if app_guard.do_async_tick.load(Ordering::Relaxed) {
-    //             for component in app_guard.components.load().iter() {
-    //                 let mut guard = component.write().await;
-    //                 guard.tick_async(&*app_guard).await.unwrap();
-    //             }
+    // let _worker = tokio::spawn(async move {});
 
-    //             app_guard.do_async_tick.swap(false, Ordering::Relaxed);
-    //         }
-
-    //         drop(app_guard);
-
-    //         tokio::time::sleep(Duration::from_millis(100)).await;
-    //     }
-    // });
+    let mut event_stream = EventStream::new();
 
     'main: loop {
-        if poll(Duration::from_millis(100))? {
-            let event = read()?;
+        let delay = Delay::new(Duration::from_millis(1_000)).fuse();
+        let event = event_stream.next().fuse();
 
-            for widget in &mut app.widgets {
-                if widget.tick(&event)? {
-                    break 'main;
+        select! {
+            _ = delay => {},
+            maybe_event = event => {
+                match maybe_event {
+                    Some(Ok(event)) => {
+                        if app.dispatch_event(event)? {
+                            break 'main;
+                        }
+                    }
+                    Some(Err(e)) => println!("Error: {e:?}\r"),
+                    None => break,
                 }
             }
-        }
-
-        let buf = {
-            let mut buf = String::with_capacity(1024);
-            for widget in &app.widgets {
-                widget.render(&mut buf)?;
-            }
-            buf
         };
 
-        app.render(buf)?;
-        app.timer = Instant::now();
+        if app.is_dirty() {
+            app.render()?;
+        }
 
         yield_now().await;
     }
@@ -94,18 +94,13 @@ pub struct App {
     scroll_offset: AtomicUsize,
     render: AtomicBool,
     do_async_tick: AtomicBool,
+    render_count: usize,
 }
 
 #[derive(Debug, Default)]
 pub enum View {
     #[default]
     Threads,
-}
-
-pub enum Tick {
-    Exit,
-    Render,
-    Noop,
 }
 
 impl App {
@@ -119,50 +114,73 @@ impl App {
             scroll_offset: AtomicUsize::new(0),
             render: AtomicBool::new(true),
             do_async_tick: AtomicBool::new(true),
+            render_count: 0,
         })
     }
 
-    pub fn suspend_for_editor(&self, initial_contents: String) -> Result<String> {
-        self.terminal.leave()?;
+    pub fn is_dirty(&self) -> bool {
+        self.widgets.iter().any(|w| w.dirty())
+    }
 
-        let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
-
-        let mut tempfile = NamedTempFile::new()?;
-        tempfile.write_all(initial_contents.as_bytes())?;
-        tempfile.flush()?;
-
-        let status = Command::new(&editor).arg(tempfile.path()).status()?;
-        if !status.success() {
-            return Err(anyhow!("editor exited with {}", status));
+    pub fn dispatch_event(&mut self, event: Event) -> Result<bool> {
+        for widget in &mut self.widgets {
+            if widget.tick(&event)? {
+                return Ok(true);
+            }
         }
 
-        let body = fs::read_to_string(tempfile.path())?;
-
-        self.terminal.enter()?;
-
-        Ok(body)
+        Ok(false)
     }
 
-    pub fn scroll(&self, step: isize) -> Tick {
-        if step == 0 {
-            return Tick::Noop;
+    // pub fn suspend_for_editor(&self, initial_contents: String) -> Result<String> {
+    //     self.terminal.leave()?;
+
+    //     let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+
+    //     let mut tempfile = NamedTempFile::new()?;
+    //     tempfile.write_all(initial_contents.as_bytes())?;
+    //     tempfile.flush()?;
+
+    //     let status = Command::new(&editor).arg(tempfile.path()).status()?;
+    //     if !status.success() {
+    //         return Err(anyhow!("editor exited with {}", status));
+    //     }
+
+    //     let body = fs::read_to_string(tempfile.path())?;
+
+    //     self.terminal.enter()?;
+
+    //     Ok(body)
+    // }
+
+    // pub fn scroll(&self, step: isize) -> Tick {
+    //     if step == 0 {
+    //         return Tick::Noop;
+    //     }
+
+    //     self.scroll_offset
+    //         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |offset| {
+    //             Some(offset.saturating_add_signed(step))
+    //         })
+    //         .unwrap();
+
+    //     Tick::Render
+    // }
+
+    // /// Delta time since last render
+    // pub fn delta(&self) -> Duration {
+    //     self.timer.elapsed()
+    // }
+
+    pub fn render(&mut self) -> Result<()> {
+        self.render_count += 1;
+
+        let mut buf = String::with_capacity(1024);
+
+        for widget in &mut self.widgets {
+            widget.render(&mut buf)?;
         }
 
-        self.scroll_offset
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |offset| {
-                Some(offset.saturating_add_signed(step))
-            })
-            .unwrap();
-
-        Tick::Render
-    }
-
-    /// Delta time since last render
-    pub fn delta(&self) -> Duration {
-        self.timer.elapsed()
-    }
-
-    fn render(&mut self, buf: String) -> Result<()> {
         let mut out = stdout();
 
         execute!(out, MoveTo(0, 0), Clear(ClearType::All))?;
@@ -194,6 +212,8 @@ impl App {
             out.write_all("  ".as_bytes())?;
             out.write_all(line.as_bytes())?;
         }
+
+        writeln!(out, "\nRenders: {}", self.render_count)?;
 
         out.flush()?;
 

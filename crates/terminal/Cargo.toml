@@ -15,10 +15,11 @@ chrono-humanize = { workspace = true }
 testresult = { workspace = true }
 futures-util = { workspace = true }
 
-crossterm = "0.29.0"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 inventory = "0.3.21"
 dirs-next = "2.0.0"
 tempfile = "3.12.0"
 clap = { version = "4.5.18", features = ["derive"] }
 textwrap = "0.16.1"
 arc-swap = { version = "1.7.1", features = ["serde"] }
+futures-timer = "3.0.3"
