@@ -7,15 +7,15 @@ use tokio::process::Command;
 use github::GitHub;
 
 use crate::{
+    actors::{header::Header, threads::Threads},
     app::{App, Context, run_app},
     color_scheme::{ColorScheme, Rgb},
-    widgets::header::Header,
 };
 
+mod actors;
 mod app;
 mod color_scheme;
 mod utils;
-mod widgets;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -23,7 +23,7 @@ mod widgets;
     version,
     about = "Review GitHub pull requests from your terminal."
 )]
-struct Terminal {
+struct Cli {
     /// Override the inferred PR number
     #[arg(short, long)]
     pr: Option<u64>,
@@ -39,14 +39,14 @@ struct Terminal {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let terminal = Terminal::parse();
+    let cli = Cli::parse();
 
     let guessed = guess_pull_request().await?;
 
     let github = GitHub::new()
-        .owner(terminal.owner.clone().unwrap_or(guessed.owner))
-        .repo(terminal.repo.clone().unwrap_or(guessed.repo))
-        .pr(terminal.pr.unwrap_or(guessed.pr))
+        .owner(cli.owner.clone().unwrap_or(guessed.owner))
+        .repo(cli.repo.clone().unwrap_or(guessed.repo))
+        .pr(cli.pr.unwrap_or(guessed.pr))
         .build()
         .await?;
 
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
     };
 
     let ctx = Context::new(github, color_scheme);
-    let app = App::new(ctx, vec![Box::new(Header)]);
+    let app = App::new(ctx, vec![Box::new(Header), Box::new(Threads::default())]);
 
     run_app(app).await?;
 

@@ -1,14 +1,18 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use crossterm::event::Event;
+use ratatui::widgets::StatefulWidgetRef;
 
 use crate::app::Context;
 
 pub mod comment;
+pub mod container;
 pub mod header;
 pub mod threads;
 
 #[macro_export]
-macro_rules! widget_task {
+macro_rules! actor_task {
     ($slot:expr => $body:expr) => {{
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
@@ -18,7 +22,7 @@ macro_rules! widget_task {
     }};
     ($slot:expr, |$val:ident| $on_done:block) => {{
         if let Some(rx) = &mut $slot {
-            if let Some(Ok($val)) = rx.now_or_never() {
+            if let Some(Ok($val)) = futures::FutureExt::now_or_never(rx) {
                 $slot = None;
                 $on_done
             }
@@ -26,20 +30,16 @@ macro_rules! widget_task {
     }};
 }
 
-pub trait Widget: std::fmt::Debug {
-    fn init(&mut self, _app: &Context) -> Result<()> {
+pub trait Actor: std::fmt::Debug + StatefulWidgetRef<State = Arc<Context>> {
+    fn init(&mut self, _ctx: Arc<Context>) -> Result<()> {
         Ok(())
     }
 
-    fn tick(&mut self, _event: &Event, _app: &Context) -> Result<bool> {
+    fn tick(&mut self, _event: &Event, _ctx: Arc<Context>) -> Result<bool> {
         Ok(false)
     }
 
-    fn poll_async(&mut self, _app: &Context) -> Result<()> {
-        Ok(())
-    }
-
-    fn render(&mut self, _buf: &mut String, _app: &Context) -> Result<()> {
+    fn poll_async(&mut self, _ctx: Arc<Context>) -> Result<()> {
         Ok(())
     }
 

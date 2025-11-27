@@ -1,26 +1,28 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, VecDeque},
-    fmt::Write,
+    sync::Arc,
 };
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
-use crossterm::{
-    event::{Event, KeyCode, KeyModifiers},
-    style::Stylize,
-};
+use crossterm::event::{Event, KeyCode, KeyModifiers};
 use octocrab::{
-    models::{CommentId, pulls::Comment},
+    models::CommentId,
     params::{Direction, pulls::comments::Sort},
+};
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Layout, Rect},
+    widgets::StatefulWidgetRef,
 };
 use tokio::sync::oneshot::Receiver;
 
 use crate::{
+    actor_task,
+    actors::{Actor, comment::ThreadComment},
     app::Context,
-    utils::{suspend_for_editor, write_stylized_block},
-    widget_task,
-    widgets::Widget,
+    utils::suspend_for_editor,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,11 +45,11 @@ impl PartialOrd for ThreadKey {
 
 #[derive(Debug)]
 pub struct Threads {
-    threads: BTreeMap<ThreadKey, Vec<Comment>>,
+    threads: BTreeMap<ThreadKey, Vec<ThreadComment>>,
     comment_queue: VecDeque<PendingComment>,
     current_thread: Option<ThreadKey>,
     current_comment: Option<usize>,
-    async_threads: Option<Receiver<BTreeMap<ThreadKey, Vec<Comment>>>>,
+    async_threads: Option<Receiver<BTreeMap<ThreadKey, Vec<ThreadComment>>>>,
 }
 
 #[derive(Debug)]
@@ -82,9 +84,13 @@ impl Threads {
             .ok_or_else(|| anyhow!("Thread not found"))
     }
 
-    pub fn current_thread(&self) -> Result<(&ThreadKey, &[Comment])> {
+    pub fn current_thread(&self) -> Result<(&ThreadKey, &[ThreadComment])> {
         let Some(current) = &self.current_thread else {
-            return Err(anyhow!("Current thread is None"));
+            let Some(first) = self.threads.first_key_value() else {
+                return Err(anyhow!("Threads tree is empty"));
+            };
+
+            return Ok((first.0, first.1.as_slice()));
         };
 
         self.threads
@@ -153,8 +159,8 @@ impl Threads {
     }
 }
 
-impl Widget for Threads {
-    fn tick(&mut self, event: &Event, app: &Context) -> Result<bool> {
+impl Actor for Threads {
+    fn tick(&mut self, event: &Event, _ctx: Arc<Context>) -> Result<bool> {
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right
@@ -202,102 +208,16 @@ impl Widget for Threads {
         Ok(false)
     }
 
-    fn render(&mut self, buf: &mut String, app: &Context) -> Result<()> {
-        let (_, comments) = self.current_thread()?;
-        let mut comments = comments.to_owned();
-        let first = &comments[0];
-
-        writeln!(buf)?;
-
-        let diff_hunk = first
-            .diff_hunk
-            .as_str()
-            .lines()
-            .map(|l| {
-                let mut chars = l.chars();
-
-                let Some(first) = chars.next() else {
-                    return l.to_owned().with(app.color_scheme.diff_unchanged.into());
-                };
-
-                let rest: String = chars.collect();
-
-                match first {
-                    '+' => format!("+  {}", rest).with(app.color_scheme.diff_added.into()),
-                    '-' => format!("-  {}", rest).with(app.color_scheme.diff_removed.into()),
-                    _ => format!("  {}", l).with(app.color_scheme.diff_unchanged.into()),
-                }
-            })
-            .try_fold(
-                {
-                    let mut s = String::new();
-                    let c = app.color_scheme.comment_body.into();
-                    write!(
-                        s,
-                        "{}{}{}\n\n",
-                        first.path.as_str().with(c),
-                        ":".with(c),
-                        first
-                            .line
-                            .unwrap_or(first.original_line.unwrap_or(1))
-                            .to_string()
-                            .with(c)
-                    )?;
-                    s
-                },
-                |mut acc, line| -> Result<String> {
-                    writeln!(acc, "{}", line)?;
-                    Ok(acc)
-                },
-            )?;
-
-        write_stylized_block(buf, diff_hunk, app.color_scheme.muted.into())?;
-        writeln!(buf)?;
-
-        for (_index, comment) in comments.iter_mut().enumerate() {
-            comment.render(buf, app)?;
-            writeln!(buf)?;
-        }
-
-        let mut controls = String::new();
-
-        write!(controls, "  ←/→ thread")?;
-        write!(controls, "  (r)eply")?;
-        write!(controls, "  (q)uit")?;
-
-        let thread_count = self.threads.len();
-        let current_thread = self.current_thread_index()?;
-        write!(
-            controls,
-            "  {}/{} thread{}",
-            current_thread + 1,
-            thread_count,
-            if thread_count > 1 { "s" } else { "" }
-        )?;
-
-        writeln!(buf, "{}", controls.with(app.color_scheme.muted.into()))?;
-
-        for pending_comment in self.comment_queue.iter() {
-            writeln!(
-                buf,
-                "- {} -> {}",
-                pending_comment.in_reply_to, pending_comment.content
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn init(&mut self, app: &Context) -> Result<()> {
-        widget_task!(self.async_threads => async move {
+    fn init(&mut self, ctx: Arc<Context>) -> Result<()> {
+        actor_task!(self.async_threads => async move {
             let mut page = Some(1u32);
-            let mut threads: HashMap<CommentId, Vec<Comment>> = HashMap::new();
+            let mut threads: HashMap<CommentId, Vec<ThreadComment>> = HashMap::new();
 
             while let Some(page_number) = page {
-                let res = app
+                let res = ctx
                     .github
                     .pulls()
-                    .list_comments(Some(app.github.pr.number))
+                    .list_comments(Some(ctx.github.pr.number))
                     .direction(Direction::Ascending)
                     .sort(Sort::Created)
                     .per_page(100)
@@ -309,7 +229,7 @@ impl Widget for Threads {
                     threads
                         .entry(item.in_reply_to_id.unwrap_or(item.id))
                         .or_default()
-                        .push(item);
+                        .push(ThreadComment(item));
                 }
 
                 if res.incomplete_results.is_some_and(|v| v) {
@@ -319,7 +239,7 @@ impl Widget for Threads {
                 }
             }
 
-            let mut result: BTreeMap<ThreadKey, Vec<Comment>> = Default::default();
+            let mut result: BTreeMap<ThreadKey, Vec<ThreadComment>> = Default::default();
 
             for (thread_id, mut comments) in threads {
                 assert!(!comments.is_empty());
@@ -338,8 +258,8 @@ impl Widget for Threads {
         Ok(())
     }
 
-    fn poll_async(&mut self, _app: &Context) -> Result<()> {
-        widget_task!(self.async_threads, |threads| {
+    fn poll_async(&mut self, _ctx: Arc<Context>) -> Result<()> {
+        actor_task!(self.async_threads, |threads| {
             self.threads = threads;
         });
         Ok(())
@@ -347,5 +267,99 @@ impl Widget for Threads {
 
     fn dirty(&self) -> bool {
         true
+    }
+}
+
+impl StatefulWidgetRef for Threads {
+    type State = Arc<Context>;
+
+    fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let Ok((_, comments)) = self.current_thread() else {
+            return;
+        };
+
+        let first = &comments[0];
+
+        // let diff_hunk = first
+        //     .diff_hunk
+        //     .as_str()
+        //     .lines()
+        //     .map(|l| {
+        //         let mut chars = l.chars();
+
+        //         let Some(first) = chars.next() else {
+        //             return l.to_owned().with(state.color_scheme.diff_unchanged.into());
+        //         };
+
+        //         let rest: String = chars.collect();
+
+        //         match first {
+        //             '+' => format!("+  {}", rest).with(state.color_scheme.diff_added.into()),
+        //             '-' => format!("-  {}", rest).with(state.color_scheme.diff_removed.into()),
+        //             _ => format!("  {}", l).with(state.color_scheme.diff_unchanged.into()),
+        //         }
+        //     })
+        //     .try_fold(
+        //         {
+        //             let mut s = String::new();
+        //             let c = state.color_scheme.comment_body.into();
+        //             write!(
+        //                 s,
+        //                 "{}{}{}\n\n",
+        //                 first.path.as_str().with(c),
+        //                 ":".with(c),
+        //                 first
+        //                     .line
+        //                     .unwrap_or(first.original_line.unwrap_or(1))
+        //                     .to_string()
+        //                     .with(c)
+        //             )
+        //             .unwrap();
+        //             s
+        //         },
+        //         |mut acc, line| -> Result<String> {
+        //             writeln!(acc, "{}", line)?;
+        //             Ok(acc)
+        //         },
+        //     )
+        //     .unwrap();
+
+        // Paragraph::new(diff_hunk).render_ref(area, buf);
+
+        let layout = Layout::vertical(comments.iter().map(|_| Constraint::Min(1)))
+            .spacing(1)
+            .split(area);
+
+        for (index, comment) in comments.iter().enumerate() {
+            comment.render_ref(layout[index], buf, state);
+        }
+
+        // let mut controls = String::new();
+
+        // write!(controls, "  ←/→ thread")?;
+        // write!(controls, "  (r)eply")?;
+        // write!(controls, "  (q)uit")?;
+
+        // let thread_count = self.threads.len();
+        // let current_thread = self.current_thread_index()?;
+        // write!(
+        //     controls,
+        //     "  {}/{} thread{}",
+        //     current_thread + 1,
+        //     thread_count,
+        //     if thread_count > 1 { "s" } else { "" }
+        // )?;
+
+        // writeln!(buf, "{}", controls.with(ctx.color_scheme.muted.into()))?;
+
+        // for pending_comment in self.comment_queue.iter() {
+        //     writeln!(
+        //         buf,
+        //         "- {} -> {}",
+        //         pending_comment.in_reply_to, pending_comment.content
+        //     )?;
+        // }
+
+        // Ok(())
     }
 }

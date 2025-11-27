@@ -1,28 +1,22 @@
-use std::{
-    io::{Write, stdout},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use crossterm::{
-    cursor::MoveTo,
-    event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers, MouseEventKind},
-    execute,
-    terminal::{Clear, ClearType, size},
-};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
 use futures::{FutureExt, StreamExt};
 use futures_timer::Delay;
 use github::{GitHub, Initialised};
+use ratatui::{prelude::*, widgets::StatefulWidgetRef};
 use tokio::{select, task::yield_now, time::Instant};
+use tui_scrollview::ScrollViewState;
 
 use crate::{
+    actors::{Actor, container::Container},
     color_scheme::ColorScheme,
-    utils::{enter_terminal, leave_terminal},
-    widgets::Widget,
+    utils::leave_terminal,
 };
 
 pub async fn run_app(mut app: App) -> Result<()> {
-    enter_terminal()?;
+    let mut terminal = ratatui::init();
 
     let mut event_stream = EventStream::new();
 
@@ -31,6 +25,14 @@ pub async fn run_app(mut app: App) -> Result<()> {
     loop {
         let delay = Delay::new(Duration::from_millis(1_000)).fuse();
         let event = event_stream.next().fuse();
+
+        app.poll_async_widgets()?;
+
+        if app.is_dirty() {
+            terminal.draw(|frame| {
+                frame.render_widget(&mut app, frame.area());
+            })?;
+        }
 
         select! {
             _ = delay => {},
@@ -47,16 +49,10 @@ pub async fn run_app(mut app: App) -> Result<()> {
             }
         };
 
-        app.poll_async_widgets()?;
-
-        if app.is_dirty() {
-            app.render()?;
-        }
-
         yield_now().await;
     }
 
-    leave_terminal()?;
+    ratatui::restore();
 
     Ok(())
 }
@@ -90,10 +86,19 @@ impl Context {
 
 #[derive(Debug)]
 pub struct App {
-    ctx: Context,
-    widgets: Vec<Box<dyn Widget>>,
-    scroll_offset: usize,
+    ctx: Arc<Context>,
+    actors: Vec<Box<dyn Actor>>,
+    scroll_state: ScrollViewState,
     dirty: bool,
+}
+
+impl Widget for &mut App {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        self.render_to_buffer(area, buf).expect("render panic");
+    }
 }
 
 impl Drop for App {
@@ -103,32 +108,30 @@ impl Drop for App {
 }
 
 impl App {
-    pub fn new(ctx: Context, widgets: Vec<Box<dyn Widget>>) -> Self {
+    pub fn new(ctx: Context, widgets: Vec<Box<dyn Actor>>) -> Self {
         Self {
-            ctx,
-            widgets,
-            scroll_offset: 0,
+            ctx: Arc::new(ctx),
+            actors: widgets,
+            scroll_state: ScrollViewState::new(),
             dirty: true,
         }
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.dirty || self.widgets.iter().any(|w| w.dirty())
+        self.dirty || self.actors.iter().any(|w| w.dirty())
     }
 
     pub fn init(&mut self) -> Result<()> {
-        let app = &self.ctx;
-        for widget in &mut self.widgets {
-            widget.init(app)?;
+        for widget in &mut self.actors {
+            widget.init(self.ctx.clone())?;
         }
 
         Ok(())
     }
 
     pub fn dispatch_event(&mut self, event: Event) -> Result<bool> {
-        let app = &self.ctx;
-        for widget in &mut self.widgets {
-            if widget.tick(&event, app)? {
+        for widget in &mut self.actors {
+            if widget.tick(&event, self.ctx.clone())? {
                 return Ok(true);
             }
         }
@@ -149,20 +152,30 @@ impl App {
             }) => true,
             Event::Key(key) => {
                 match key.code {
-                    KeyCode::Down if key.modifiers.is_empty() => self.scroll(1),
-                    KeyCode::PageDown if key.modifiers.is_empty() => self.scroll(page_step()),
-                    KeyCode::Up if key.modifiers.is_empty() => self.scroll(-1),
-                    KeyCode::PageUp if key.modifiers.is_empty() => self.scroll(-page_step()),
-                    KeyCode::Home if key.modifiers.is_empty() => self.scroll(isize::MIN),
-                    KeyCode::End if key.modifiers.is_empty() => self.scroll(isize::MAX),
-                    _ => {}
-                };
-                false
-            }
-            Event::Mouse(mouse) => {
-                match mouse.kind {
-                    MouseEventKind::ScrollUp => self.scroll(-3),
-                    MouseEventKind::ScrollDown => self.scroll(3),
+                    KeyCode::Down if key.modifiers.is_empty() => {
+                        self.scroll_state.scroll_down();
+                        self.dirty = true;
+                    }
+                    KeyCode::PageDown if key.modifiers.is_empty() => {
+                        self.scroll_state.scroll_page_down();
+                        self.dirty = true;
+                    }
+                    KeyCode::Up if key.modifiers.is_empty() => {
+                        self.scroll_state.scroll_up();
+                        self.dirty = true;
+                    }
+                    KeyCode::PageUp if key.modifiers.is_empty() => {
+                        self.scroll_state.scroll_page_up();
+                        self.dirty = true;
+                    }
+                    KeyCode::Home if key.modifiers.is_empty() => {
+                        self.scroll_state.scroll_to_top();
+                        self.dirty = true;
+                    }
+                    KeyCode::End if key.modifiers.is_empty() => {
+                        self.scroll_state.scroll_to_bottom();
+                        self.dirty = true;
+                    }
                     _ => {}
                 };
                 false
@@ -175,70 +188,20 @@ impl App {
         })
     }
 
-    fn scroll(&mut self, step: isize) {
-        self.scroll_offset = self.scroll_offset.saturating_add_signed(step);
-        self.dirty = true;
-    }
-
     pub fn poll_async_widgets(&mut self) -> Result<()> {
-        let app = &self.ctx;
-        for widget in &mut self.widgets {
-            widget.poll_async(app)?;
+        for widget in &mut self.actors {
+            widget.poll_async(self.ctx.clone())?;
         }
         Ok(())
     }
 
-    pub fn render(&mut self) -> Result<()> {
-        self.dirty = false;
+    pub fn render_to_buffer(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
+        let container = Container {
+            actors: self.actors.as_slice(),
+        };
 
-        let app = &self.ctx;
-        let mut buf = String::new();
-
-        for widget in &mut self.widgets {
-            widget.render(&mut buf, app)?;
-        }
-
-        let mut out = stdout();
-
-        execute!(out, MoveTo(0, 0), Clear(ClearType::All))?;
-
-        let mut lines: Vec<&str> = buf.lines().collect();
-
-        // Add top and bottom padding
-        lines.insert(0, "");
-        lines.push("");
-
-        let (_, height) = size()?;
-        let viewport = height as usize;
-
-        if viewport == 0 {
-            return Ok(());
-        }
-
-        let mut scroll_offset = self.scroll_offset;
-        let max_offset = lines.len().saturating_sub(viewport);
-
-        if scroll_offset > max_offset {
-            scroll_offset = max_offset;
-        }
-
-        for (row, line) in lines.iter().skip(scroll_offset).take(viewport).enumerate() {
-            let y = row as u16;
-            execute!(out, MoveTo(0, y))?;
-            // TODO Config option for indent
-            out.write_all("  ".as_bytes())?;
-            out.write_all(line.as_bytes())?;
-        }
-
-        out.flush()?;
+        container.render_ref(area, buf, &mut (self.scroll_state, self.ctx.clone()));
 
         Ok(())
-    }
-}
-
-fn page_step() -> isize {
-    match size() {
-        Ok((_, height)) => height.saturating_sub(1) as isize,
-        Err(_) => 0,
     }
 }

@@ -2,7 +2,7 @@ use std::{
     env,
     fmt::{Display, Write},
     fs,
-    io::stdout,
+    io::{Write as _, stdout},
     process::Command,
 };
 
