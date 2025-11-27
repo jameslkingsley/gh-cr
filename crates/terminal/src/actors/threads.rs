@@ -326,9 +326,14 @@ impl StatefulWidgetRef for Threads {
 
         // Paragraph::new(diff_hunk).render_ref(area, buf);
 
-        let layout = Layout::vertical(comments.iter().map(|_| Constraint::Min(1)))
-            .spacing(1)
-            .split(area);
+        let layout = Layout::vertical(
+            comments
+                .iter()
+                .map(|c| Constraint::Length(c.layout_height())),
+        )
+        .spacing(1)
+        .flex(ratatui::layout::Flex::Start)
+        .split(area);
 
         for (index, comment) in comments.iter().enumerate() {
             comment.render_ref(layout[index], buf, state);
