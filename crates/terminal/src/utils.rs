@@ -1,6 +1,23 @@
-use std::fmt::{Display, Write};
+use std::{
+    env,
+    fmt::{Display, Write},
+    fs,
+    io::stdout,
+    process::Command,
+};
 
-use crossterm::style::{Color, Stylize};
+use anyhow::{Result, anyhow};
+use crossterm::{
+    cursor::{Hide, Show},
+    event::DisableMouseCapture,
+    execute,
+    style::{Color, Stylize},
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
+};
+use tempfile::NamedTempFile;
 
 pub fn write_stylized_block(buf: &mut String, block: String, color: Color) -> std::fmt::Result {
     let lines = block.lines().collect::<Vec<_>>();
@@ -34,4 +51,45 @@ pub fn hyperlink<Text: Display, Url: Display>(
     url: Url,
 ) -> Result<(), std::fmt::Error> {
     write!(buf, "\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
+}
+
+pub fn enter_terminal() -> Result<()> {
+    let mut out = stdout();
+    enable_raw_mode()?;
+    execute!(
+        out,
+        EnterAlternateScreen,
+        Clear(ClearType::All),
+        Hide,
+        DisableMouseCapture
+    )?;
+    Ok(())
+}
+
+pub fn leave_terminal() -> Result<()> {
+    let mut out = stdout();
+    disable_raw_mode().ok();
+    execute!(out, DisableMouseCapture, Show, LeaveAlternateScreen)?;
+    Ok(())
+}
+
+pub fn suspend_for_editor(initial_contents: String) -> Result<String> {
+    leave_terminal()?;
+
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+
+    let mut tempfile = NamedTempFile::new()?;
+    tempfile.write_all(initial_contents.as_bytes())?;
+    tempfile.flush()?;
+
+    let status = Command::new(&editor).arg(tempfile.path()).status()?;
+    if !status.success() {
+        return Err(anyhow!("editor exited with {}", status));
+    }
+
+    let body = fs::read_to_string(tempfile.path())?;
+
+    enter_terminal()?;
+
+    Ok(body)
 }

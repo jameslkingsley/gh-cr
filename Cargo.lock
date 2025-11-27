@@ -1988,6 +1988,7 @@ dependencies = [
  "futures-util",
  "github",
  "inventory",
+ "octocrab",
  "serde",
  "serde_json",
  "tempfile",

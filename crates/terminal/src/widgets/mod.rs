@@ -1,68 +1,49 @@
-#![allow(dead_code, unused_variables)]
-
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode};
-use std::fmt::Write;
+use crossterm::event::Event;
+
+use crate::app::Context;
+
+pub mod comment;
+pub mod header;
+pub mod threads;
+
+#[macro_export]
+macro_rules! widget_task {
+    ($slot:expr => $body:expr) => {{
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let _ = tx.send($body.await);
+        });
+        $slot = Some(rx);
+    }};
+    ($slot:expr, |$val:ident| $on_done:block) => {{
+        if let Some(rx) = &mut $slot {
+            if let Some(Ok($val)) = rx.now_or_never() {
+                $slot = None;
+                $on_done
+            }
+        }
+    }};
+}
 
 pub trait Widget: std::fmt::Debug {
-    fn init(&mut self) -> Result<()> {
+    fn init(&mut self, _app: &Context) -> Result<()> {
         Ok(())
     }
 
-    fn tick(&mut self, event: &Event) -> Result<bool>;
+    fn tick(&mut self, _event: &Event, _app: &Context) -> Result<bool> {
+        Ok(false)
+    }
 
-    fn render(&mut self, buf: &mut String) -> Result<()> {
+    fn poll_async(&mut self, _app: &Context) -> Result<()> {
+        Ok(())
+    }
+
+    fn render(&mut self, _buf: &mut String, _app: &Context) -> Result<()> {
         Ok(())
     }
 
     fn dirty(&self) -> bool {
         false
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Example {
-    pub lines: Vec<String>,
-    pub dirty: bool,
-}
-
-impl Example {
-    pub fn add_line(&mut self) {
-        self.lines.push("Here is a line".to_string());
-        self.dirty = true;
-    }
-
-    pub fn remove_line(&mut self) {
-        self.lines.pop();
-        self.dirty = true;
-    }
-}
-
-impl Widget for Example {
-    fn tick(&mut self, event: &Event) -> Result<bool> {
-        if let Event::Key(key) = event {
-            match key.code {
-                KeyCode::Char('a') => self.add_line(),
-                KeyCode::Char('r') => self.remove_line(),
-                KeyCode::Char('q') => return Ok(true),
-                _ => {}
-            }
-        }
-
-        Ok(false)
-    }
-
-    fn render(&mut self, buf: &mut String) -> Result<()> {
-        for line in &self.lines {
-            writeln!(buf, "{}", line)?;
-        }
-
-        self.dirty = false;
-
-        Ok(())
-    }
-
-    fn dirty(&self) -> bool {
-        self.dirty
     }
 }

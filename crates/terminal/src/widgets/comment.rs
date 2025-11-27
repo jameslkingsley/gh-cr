@@ -6,17 +6,10 @@ use chrono_humanize::Humanize;
 use crossterm::style::Stylize;
 use octocrab::models::pulls::Comment;
 
-use crate::{app::App, components::Render, utils::write_stylized_block};
+use crate::{app::Context, utils::write_stylized_block, widgets::Widget};
 
-#[derive(Debug)]
-pub struct CommentContext {
-    pub is_selected: bool,
-}
-
-impl Render for Comment {
-    type Context = CommentContext;
-
-    fn render(&self, buf: &mut String, app: &App, ctx: Self::Context) -> Result<()> {
+impl Widget for Comment {
+    fn render(&mut self, buf: &mut String, app: &Context) -> Result<()> {
         let mut comment = String::with_capacity(self.body.len());
 
         let time_delta = TimeDelta::from_std(app.delta())?;
@@ -44,15 +37,7 @@ impl Render for Comment {
             )?;
         }
 
-        write_stylized_block(
-            buf,
-            comment,
-            if ctx.is_selected {
-                app.color_scheme.border_active.into()
-            } else {
-                app.color_scheme.border.into()
-            },
-        )?;
+        write_stylized_block(buf, comment, app.color_scheme.border.into())?;
 
         Ok(())
     }

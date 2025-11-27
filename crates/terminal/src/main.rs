@@ -1,34 +1,20 @@
 use anyhow::{Result, anyhow};
 use clap::Parser;
-use crossterm::{
-    cursor::{Hide, Show},
-    event::DisableMouseCapture,
-    execute,
-    terminal::{
-        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
-    },
-};
 use serde_json::Value;
-use std::{ffi::OsStr, io::stdout, sync::Arc};
-use tokio::{process::Command, sync::RwLock};
+use std::ffi::OsStr;
+use tokio::process::Command;
 
 use github::GitHub;
 
-use crate::app::{App, run_app};
-
-// use crate::{
-// app::{App, run_app},
-// color_scheme::{ColorScheme, Rgb},
-// };
+use crate::{
+    app::{App, Context, run_app},
+    color_scheme::{ColorScheme, Rgb},
+    widgets::header::Header,
+};
 
 mod app;
-// mod color_scheme;
-// mod components;
-// mod review;
-// mod threads;
-// mod utils;
-mod keybinds;
+mod color_scheme;
+mod utils;
 mod widgets;
 
 #[derive(Debug, Parser)]
@@ -51,40 +37,6 @@ struct Terminal {
     repo: Option<String>,
 }
 
-impl Terminal {
-    fn enter(&self) -> Result<()> {
-        let mut out = stdout();
-
-        enable_raw_mode()?;
-
-        execute!(
-            out,
-            EnterAlternateScreen,
-            Clear(ClearType::All),
-            Hide,
-            DisableMouseCapture
-        )?;
-
-        Ok(())
-    }
-
-    fn leave(&self) -> Result<()> {
-        let mut out = stdout();
-
-        disable_raw_mode().ok();
-
-        execute!(out, DisableMouseCapture, Show, LeaveAlternateScreen)?;
-
-        Ok(())
-    }
-}
-
-impl Drop for Terminal {
-    fn drop(&mut self) {
-        let _ = self.leave();
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let terminal = Terminal::parse();
@@ -98,19 +50,20 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    // let color_scheme = ColorScheme {
-    //     pr_title: Rgb(208, 208, 208),
-    //     muted: Rgb(51, 53, 68),
-    //     author: Rgb(18, 207, 192),
-    //     comment_body: Rgb(208, 208, 208),
-    //     border: Rgb(51, 53, 68),
-    //     border_active: Rgb(18, 207, 192),
-    //     diff_added: Rgb(218, 255, 166),
-    //     diff_removed: Rgb(246, 144, 144),
-    //     diff_unchanged: Rgb(51, 53, 68),
-    // };
+    let color_scheme = ColorScheme {
+        pr_title: Rgb(208, 208, 208),
+        muted: Rgb(51, 53, 68),
+        author: Rgb(18, 207, 192),
+        comment_body: Rgb(208, 208, 208),
+        border: Rgb(51, 53, 68),
+        border_active: Rgb(18, 207, 192),
+        diff_added: Rgb(218, 255, 166),
+        diff_removed: Rgb(246, 144, 144),
+        diff_unchanged: Rgb(51, 53, 68),
+    };
 
-    let app = App::new(github, terminal).await?;
+    let ctx = Context::new(github, color_scheme);
+    let app = App::new(ctx, vec![Box::new(Header)]);
 
     run_app(app).await?;
 

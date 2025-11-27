@@ -1,59 +1,34 @@
 use std::{
-    env, fs,
     io::{Write, stdout},
-    process::Command,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
     time::Duration,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
-    event::{Event, EventStream, poll, read},
+    event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers, MouseEventKind},
     execute,
     terminal::{Clear, ClearType, size},
 };
 use futures::{FutureExt, StreamExt};
 use futures_timer::Delay;
 use github::{GitHub, Initialised};
-use tempfile::NamedTempFile;
-use tokio::{
-    select,
-    sync::{RwLock, mpsc::unbounded_channel},
-    task::yield_now,
-    time::Instant,
-};
+use tokio::{select, task::yield_now, time::Instant};
 
 use crate::{
-    Terminal,
-    widgets::{Example, Widget},
-    // color_scheme::ColorScheme,
-    // components::{Component, Header, Quit, Resize, Scroll},
-    // github::{GitHub, Initialised},
-    // threads::Threads,
+    color_scheme::ColorScheme,
+    utils::{enter_terminal, leave_terminal},
+    widgets::Widget,
 };
 
-// TODO Use ratatui
-//      Compare by commits option
-
-#[derive(Debug)]
-pub struct Context {
-    //
-}
-
 pub async fn run_app(mut app: App) -> Result<()> {
-    app.terminal.enter()?;
-
-    // let (async_tx, async_rx) = unbounded_channel();
-
-    // let _worker = tokio::spawn(async move {});
+    enter_terminal()?;
 
     let mut event_stream = EventStream::new();
 
-    'main: loop {
+    app.init()?;
+
+    loop {
         let delay = Delay::new(Duration::from_millis(1_000)).fuse();
         let event = event_stream.next().fuse();
 
@@ -63,14 +38,16 @@ pub async fn run_app(mut app: App) -> Result<()> {
                 match maybe_event {
                     Some(Ok(event)) => {
                         if app.dispatch_event(event)? {
-                            break 'main;
+                            break;
                         }
                     }
-                    Some(Err(e)) => println!("Error: {e:?}\r"),
+                    Some(Err(e)) => panic!("Error: {e:?}\r"),
                     None => break,
                 }
             }
         };
+
+        app.poll_async_widgets()?;
 
         if app.is_dirty() {
             app.render()?;
@@ -79,22 +56,16 @@ pub async fn run_app(mut app: App) -> Result<()> {
         yield_now().await;
     }
 
-    app.terminal.leave()?;
+    leave_terminal()?;
 
     Ok(())
 }
 
 #[derive(Debug)]
-pub struct App {
+pub struct Context {
     pub github: GitHub<Initialised>,
-    pub terminal: Terminal,
-    pub widgets: Vec<Box<dyn Widget>>,
+    pub color_scheme: ColorScheme,
     timer: Instant,
-    view: View,
-    scroll_offset: AtomicUsize,
-    render: AtomicBool,
-    do_async_tick: AtomicBool,
-    render_count: usize,
 }
 
 #[derive(Debug, Default)]
@@ -103,82 +74,128 @@ pub enum View {
     Threads,
 }
 
-impl App {
-    pub async fn new(github: GitHub<Initialised>, terminal: Terminal) -> Result<Self> {
-        Ok(Self {
+impl Context {
+    pub fn new(github: GitHub<Initialised>, color_scheme: ColorScheme) -> Self {
+        Self {
             github,
-            terminal,
-            widgets: vec![Box::new(Example::default())],
+            color_scheme,
             timer: Instant::now(),
-            view: View::default(),
-            scroll_offset: AtomicUsize::new(0),
-            render: AtomicBool::new(true),
-            do_async_tick: AtomicBool::new(true),
-            render_count: 0,
-        })
+        }
+    }
+
+    pub fn delta(&self) -> Duration {
+        self.timer.elapsed()
+    }
+}
+
+#[derive(Debug)]
+pub struct App {
+    ctx: Context,
+    widgets: Vec<Box<dyn Widget>>,
+    scroll_offset: usize,
+    dirty: bool,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        let _ = leave_terminal();
+    }
+}
+
+impl App {
+    pub fn new(ctx: Context, widgets: Vec<Box<dyn Widget>>) -> Self {
+        Self {
+            ctx,
+            widgets,
+            scroll_offset: 0,
+            dirty: true,
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.widgets.iter().any(|w| w.dirty())
+        self.dirty || self.widgets.iter().any(|w| w.dirty())
+    }
+
+    pub fn init(&mut self) -> Result<()> {
+        let app = &self.ctx;
+        for widget in &mut self.widgets {
+            widget.init(app)?;
+        }
+
+        Ok(())
     }
 
     pub fn dispatch_event(&mut self, event: Event) -> Result<bool> {
+        let app = &self.ctx;
         for widget in &mut self.widgets {
-            if widget.tick(&event)? {
+            if widget.tick(&event, app)? {
                 return Ok(true);
             }
         }
-
-        Ok(false)
+        self.handle_event(&event)
     }
 
-    // pub fn suspend_for_editor(&self, initial_contents: String) -> Result<String> {
-    //     self.terminal.leave()?;
+    fn handle_event(&mut self, event: &Event) -> Result<bool> {
+        Ok(match event {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            })
+            | Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => true,
+            Event::Key(key) => {
+                match key.code {
+                    KeyCode::Down if key.modifiers.is_empty() => self.scroll(1),
+                    KeyCode::PageDown if key.modifiers.is_empty() => self.scroll(page_step()),
+                    KeyCode::Up if key.modifiers.is_empty() => self.scroll(-1),
+                    KeyCode::PageUp if key.modifiers.is_empty() => self.scroll(-page_step()),
+                    KeyCode::Home if key.modifiers.is_empty() => self.scroll(isize::MIN),
+                    KeyCode::End if key.modifiers.is_empty() => self.scroll(isize::MAX),
+                    _ => {}
+                };
+                false
+            }
+            Event::Mouse(mouse) => {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.scroll(-3),
+                    MouseEventKind::ScrollDown => self.scroll(3),
+                    _ => {}
+                };
+                false
+            }
+            Event::Resize(_, _) => {
+                self.dirty = true;
+                false
+            }
+            _ => false,
+        })
+    }
 
-    //     let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+    fn scroll(&mut self, step: isize) {
+        self.scroll_offset = self.scroll_offset.saturating_add_signed(step);
+        self.dirty = true;
+    }
 
-    //     let mut tempfile = NamedTempFile::new()?;
-    //     tempfile.write_all(initial_contents.as_bytes())?;
-    //     tempfile.flush()?;
-
-    //     let status = Command::new(&editor).arg(tempfile.path()).status()?;
-    //     if !status.success() {
-    //         return Err(anyhow!("editor exited with {}", status));
-    //     }
-
-    //     let body = fs::read_to_string(tempfile.path())?;
-
-    //     self.terminal.enter()?;
-
-    //     Ok(body)
-    // }
-
-    // pub fn scroll(&self, step: isize) -> Tick {
-    //     if step == 0 {
-    //         return Tick::Noop;
-    //     }
-
-    //     self.scroll_offset
-    //         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |offset| {
-    //             Some(offset.saturating_add_signed(step))
-    //         })
-    //         .unwrap();
-
-    //     Tick::Render
-    // }
-
-    // /// Delta time since last render
-    // pub fn delta(&self) -> Duration {
-    //     self.timer.elapsed()
-    // }
+    pub fn poll_async_widgets(&mut self) -> Result<()> {
+        let app = &self.ctx;
+        for widget in &mut self.widgets {
+            widget.poll_async(app)?;
+        }
+        Ok(())
+    }
 
     pub fn render(&mut self) -> Result<()> {
-        self.render_count += 1;
+        self.dirty = false;
 
-        let mut buf = String::with_capacity(1024);
+        let app = &self.ctx;
+        let mut buf = String::new();
 
         for widget in &mut self.widgets {
-            widget.render(&mut buf)?;
+            widget.render(&mut buf, app)?;
         }
 
         let mut out = stdout();
@@ -198,7 +215,7 @@ impl App {
             return Ok(());
         }
 
-        let mut scroll_offset = self.scroll_offset.load(Ordering::Relaxed);
+        let mut scroll_offset = self.scroll_offset;
         let max_offset = lines.len().saturating_sub(viewport);
 
         if scroll_offset > max_offset {
@@ -213,10 +230,15 @@ impl App {
             out.write_all(line.as_bytes())?;
         }
 
-        writeln!(out, "\nRenders: {}", self.render_count)?;
-
         out.flush()?;
 
         Ok(())
+    }
+}
+
+fn page_step() -> isize {
+    match size() {
+        Ok((_, height)) => height.saturating_sub(1) as isize,
+        Err(_) => 0,
     }
 }

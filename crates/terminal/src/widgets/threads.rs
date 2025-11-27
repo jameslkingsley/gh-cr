@@ -2,7 +2,6 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, VecDeque},
     fmt::Write,
-    pin::Pin,
 };
 
 use anyhow::{Result, anyhow};
@@ -15,11 +14,13 @@ use octocrab::{
     models::{CommentId, pulls::Comment},
     params::{Direction, pulls::comments::Sort},
 };
+use tokio::sync::oneshot::Receiver;
 
 use crate::{
-    app::{App, Tick},
-    components::{CommentContext, Component, Render},
-    utils::write_stylized_block,
+    app::Context,
+    utils::{suspend_for_editor, write_stylized_block},
+    widget_task,
+    widgets::Widget,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +47,7 @@ pub struct Threads {
     comment_queue: VecDeque<PendingComment>,
     current_thread: Option<ThreadKey>,
     current_comment: Option<usize>,
-    stale: bool,
+    async_threads: Option<Receiver<BTreeMap<ThreadKey, Vec<Comment>>>>,
 }
 
 #[derive(Debug)]
@@ -62,7 +63,7 @@ impl Default for Threads {
             comment_queue: VecDeque::new(),
             current_thread: None,
             current_comment: None,
-            stale: true,
+            async_threads: None,
         }
     }
 }
@@ -152,14 +153,13 @@ impl Threads {
     }
 }
 
-impl Component for Threads {
-    fn tick(&mut self, app: &App, event: &Event) -> Result<Tick> {
+impl Widget for Threads {
+    fn tick(&mut self, event: &Event, app: &Context) -> Result<bool> {
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right
         {
             self.next_thread()?;
-            return Ok(Tick::Render);
         }
 
         // Previous thread
@@ -167,7 +167,6 @@ impl Component for Threads {
             && key.code == KeyCode::Left
         {
             self.prev_thread()?;
-            return Ok(Tick::Render);
         }
 
         // Next comment
@@ -176,7 +175,6 @@ impl Component for Threads {
             && key.modifiers.contains(KeyModifiers::ALT)
         {
             self.next_comment()?;
-            return Ok(Tick::Render);
         }
 
         // Previous comment
@@ -185,7 +183,6 @@ impl Component for Threads {
             && key.modifiers.contains(KeyModifiers::ALT)
         {
             self.prev_comment()?;
-            return Ok(Tick::Render);
         }
 
         // Reply
@@ -195,19 +192,19 @@ impl Component for Threads {
             let (thread_key, _) = self.current_thread()?;
             let _shift_held = key.modifiers.contains(KeyModifiers::SHIFT);
             // TODO: Set initial contents to comment thread
-            let content = app.suspend_for_editor(String::new())?;
+            let content = suspend_for_editor(String::new())?;
             self.queue_reply(PendingComment {
                 in_reply_to: thread_key.id,
                 content,
             })?;
-            return Ok(Tick::Render);
         }
 
-        Ok(Tick::Noop)
+        Ok(false)
     }
 
-    fn render(&self, buf: &mut String, app: &App) -> Result<()> {
+    fn render(&mut self, buf: &mut String, app: &Context) -> Result<()> {
         let (_, comments) = self.current_thread()?;
+        let mut comments = comments.to_owned();
         let first = &comments[0];
 
         writeln!(buf)?;
@@ -257,14 +254,8 @@ impl Component for Threads {
         write_stylized_block(buf, diff_hunk, app.color_scheme.muted.into())?;
         writeln!(buf)?;
 
-        for (index, comment) in comments.iter().enumerate() {
-            comment.render(
-                buf,
-                app,
-                CommentContext {
-                    is_selected: self.current_comment.is_some_and(|i| i == index),
-                },
-            )?;
+        for (_index, comment) in comments.iter_mut().enumerate() {
+            comment.render(buf, app)?;
             writeln!(buf)?;
         }
 
@@ -297,59 +288,64 @@ impl Component for Threads {
         Ok(())
     }
 
-    fn tick_async<'a>(
-        &'a mut self,
-        app: &'a App,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            if self.stale {
-                let mut page = Some(1u32);
-                let mut threads: HashMap<CommentId, Vec<Comment>> = HashMap::new();
+    fn init(&mut self, app: &Context) -> Result<()> {
+        widget_task!(self.async_threads => async move {
+            let mut page = Some(1u32);
+            let mut threads: HashMap<CommentId, Vec<Comment>> = HashMap::new();
 
-                while let Some(page_number) = page {
-                    let res = app
-                        .github
-                        .pulls()
-                        .list_comments(Some(app.github.pr.number))
-                        .direction(Direction::Ascending)
-                        .sort(Sort::Created)
-                        .per_page(100)
-                        .page(page_number)
-                        .send()
-                        .await?;
+            while let Some(page_number) = page {
+                let res = app
+                    .github
+                    .pulls()
+                    .list_comments(Some(app.github.pr.number))
+                    .direction(Direction::Ascending)
+                    .sort(Sort::Created)
+                    .per_page(100)
+                    .page(page_number)
+                    .send()
+                    .await.unwrap();
 
-                    for item in res.items {
-                        threads
-                            .entry(item.in_reply_to_id.unwrap_or(item.id))
-                            .or_default()
-                            .push(item);
-                    }
-
-                    if res.incomplete_results.is_some_and(|v| v) {
-                        page.replace(page_number + 1);
-                    } else {
-                        page = None;
-                    }
+                for item in res.items {
+                    threads
+                        .entry(item.in_reply_to_id.unwrap_or(item.id))
+                        .or_default()
+                        .push(item);
                 }
 
-                for (thread_id, mut comments) in threads {
-                    assert!(!comments.is_empty());
-                    comments.sort_unstable_by_key(|c| c.created_at);
-
-                    let key = ThreadKey {
-                        id: thread_id,
-                        ts: comments[0].created_at,
-                    };
-
-                    self.current_thread.get_or_insert(key);
-
-                    self.threads.insert(key, comments);
+                if res.incomplete_results.is_some_and(|v| v) {
+                    page.replace(page_number + 1);
+                } else {
+                    page = None;
                 }
-
-                self.stale = false;
             }
 
-            Ok(())
-        })
+            let mut result: BTreeMap<ThreadKey, Vec<Comment>> = Default::default();
+
+            for (thread_id, mut comments) in threads {
+                assert!(!comments.is_empty());
+                comments.sort_unstable_by_key(|c| c.created_at);
+
+                let key = ThreadKey {
+                    id: thread_id,
+                    ts: comments[0].created_at,
+                };
+
+                result.insert(key, comments);
+            }
+
+            result
+        });
+        Ok(())
+    }
+
+    fn poll_async(&mut self, _app: &Context) -> Result<()> {
+        widget_task!(self.async_threads, |threads| {
+            self.threads = threads;
+        });
+        Ok(())
+    }
+
+    fn dirty(&self) -> bool {
+        true
     }
 }
