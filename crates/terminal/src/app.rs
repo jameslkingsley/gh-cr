@@ -12,7 +12,6 @@ use tui_scrollview::ScrollViewState;
 use crate::{
     actors::{Actor, container::Container},
     color_scheme::ColorScheme,
-    utils::leave_terminal,
 };
 
 pub async fn run_app(mut app: App) -> Result<()> {
@@ -103,7 +102,7 @@ impl Widget for &mut App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        let _ = leave_terminal();
+        ratatui::restore();
     }
 }
 

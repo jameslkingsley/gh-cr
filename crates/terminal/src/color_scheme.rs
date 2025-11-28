@@ -1,4 +1,5 @@
 use crossterm::style::Color;
+use ratatui::style::Color as TuiColor;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -24,5 +25,11 @@ impl From<Rgb> for Color {
             g: rgb.1,
             b: rgb.2,
         }
+    }
+}
+
+impl From<Rgb> for TuiColor {
+    fn from(rgb: Rgb) -> Self {
+        TuiColor::Rgb(rgb.0, rgb.1, rgb.2)
     }
 }

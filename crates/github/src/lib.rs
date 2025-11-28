@@ -56,6 +56,12 @@ impl<T> DerefMut for GitHub<T> {
     }
 }
 
+impl Default for GitHub<Pending> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitHub<Pending> {
     pub fn new() -> Self {
         Self {

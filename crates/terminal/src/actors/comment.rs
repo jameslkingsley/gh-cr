@@ -6,9 +6,11 @@ use octocrab::models::pulls::Comment;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    text::{Line, ToLine},
-    widgets::{Block, Borders, Paragraph, StatefulWidgetRef, Widget, Wrap},
+    style::{Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::{Paragraph, StatefulWidgetRef, Widget, Wrap},
 };
+use textwrap::wrap;
 
 use crate::{actors::Actor, app::Context};
 
@@ -24,12 +26,12 @@ impl Deref for ThreadComment {
 }
 
 impl ThreadComment {
-    pub fn wrapped_body(&self) -> Vec<Cow<'_, str>> {
-        textwrap::wrap(&self.body, 80)
+    pub fn wrapped_body_with_width(&self, width: usize) -> Vec<Cow<'_, str>> {
+        wrap(&self.body, width)
     }
 
-    pub fn layout_height(&self) -> u16 {
-        self.wrapped_body().len() as u16 + 2
+    pub fn layout_height(&self, width: usize) -> u16 {
+        self.wrapped_body_with_width(width).len() as u16 + 3
     }
 }
 
@@ -38,56 +40,45 @@ impl StatefulWidgetRef for ThreadComment {
 
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let time_delta = TimeDelta::from_std(state.delta()).expect("invalid delta");
+        let author = self
+            .user
+            .as_ref()
+            .map(|a| a.login.as_str())
+            .unwrap_or("(unknown)");
+        let created_at = self
+            .created_at
+            .checked_add_signed(time_delta)
+            .unwrap_or(self.created_at)
+            .humanize();
 
-        let block = Block::new()
-            .borders(Borders::LEFT)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(format!(
-                "{} {}",
-                self.user
-                    .as_ref()
-                    .map(|a| a.login.as_str())
-                    .unwrap_or_else(|| "(unknown)"),
-                self.created_at
-                    .checked_add_signed(time_delta)
-                    .unwrap_or(self.created_at)
-                    .humanize()
-            ))
-            .title_alignment(ratatui::layout::Alignment::Left);
+        let wrap_width = usize::from(area.width.max(10).min(80));
 
-        let mut top = area.top();
+        let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(vec![
+            Span::styled(
+                author,
+                Style::default()
+                    .fg(state.color_scheme.author.into())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                created_at,
+                Style::default().fg(state.color_scheme.muted.into()),
+            ),
+        ]));
 
-        buf.set_line(
-            area.left(),
-            top,
-            &format!(
-                "{} {}",
-                self.user
-                    .as_ref()
-                    .map(|a| a.login.as_str())
-                    .unwrap_or_else(|| "(unknown)"),
-                self.created_at
-                    .checked_add_signed(time_delta)
-                    .unwrap_or(self.created_at)
-                    .humanize()
-            )
-            .to_line(),
-            80,
-        );
+        lines.push(Line::default());
 
-        top += 1;
-
-        for (index, line) in self.wrapped_body().iter().enumerate() {
-            let y = index as u16;
-            buf.set_line(area.left(), top + y, &line.to_line(), 80);
+        for wrapped in self.wrapped_body_with_width(wrap_width) {
+            lines.push(Line::from(Span::raw(wrapped.into_owned())));
         }
 
-        // let p = Paragraph::new(self.body.clone())
-        //     .wrap(Wrap { trim: false })
-        //     .left_aligned()
-        //     .block(block);
+        lines.push(Line::default());
 
-        // p.render(area, buf);
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
     }
 }
 

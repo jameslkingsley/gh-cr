@@ -1,13 +1,12 @@
-use std::{fmt::Write, sync::Arc};
+use std::sync::Arc;
 
-use anyhow::Result;
 use chrono_humanize::Humanize;
-use crossterm::style::Stylize;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    text::Line,
-    widgets::{StatefulWidgetRef, WidgetRef},
+    style::{Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::{Paragraph, StatefulWidgetRef, Widget},
 };
 
 use crate::{actors::Actor, app::Context};
@@ -25,63 +24,66 @@ impl StatefulWidgetRef for Header {
     type State = Arc<Context>;
 
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let line = Line::from(format!(
-            "{}",
-            state.github.pr.title.as_deref().unwrap_or("Pull Request")
-        ));
+        let pr = &state.github.pr;
 
-        line.render_ref(area, buf);
+        let mut lines: Vec<Line> = Vec::new();
 
-        // let mut pr_link = String::new();
-        // write!(pr_link, "(")?;
-        // match ctx.github.pr.html_url.as_ref() {
-        //     Some(url) => hyperlink(&mut pr_link, format!("#{}", ctx.github.pr.number), url),
-        //     None => write!(pr_link, "#{}", ctx.github.pr.number),
-        // }?;
-        // write!(pr_link, ")")?;
+        let title = pr.title.as_deref().unwrap_or("Pull Request");
+        lines.push(Line::from(Span::styled(
+            title,
+            Style::default()
+                .fg(state.color_scheme.pr_title.into())
+                .add_modifier(Modifier::BOLD),
+        )));
 
-        // write!(buf, " {}", pr_link.with(ctx.color_scheme.muted.into()))?;
+        let mut meta: Vec<Span> = Vec::new();
 
-        // writeln!(buf)?;
+        if let Some(author) = pr.user.as_ref() {
+            meta.push(Span::styled(
+                author.login.as_str(),
+                Style::default().fg(state.color_scheme.author.into()),
+            ));
+        }
 
-        // if let Some(author) = ctx.github.pr.user.as_ref() {
-        //     write!(
-        //         buf,
-        //         "  {}",
-        //         author.login.as_str().with(ctx.color_scheme.author.into())
-        //     )?;
-        // }
+        if let Some(updated_at) = pr.updated_at {
+            if !meta.is_empty() {
+                meta.push(Span::styled(
+                    "  ·  ",
+                    Style::default().fg(state.color_scheme.muted.into()),
+                ));
+            }
 
-        // if let Some(updated_at) = ctx.github.pr.updated_at.as_ref() {
-        //     write!(
-        //         buf,
-        //         " {} {}",
-        //         "·".with(ctx.color_scheme.muted.into()),
-        //         updated_at.humanize().with(ctx.color_scheme.muted.into())
-        //     )?;
-        // }
+            meta.push(Span::styled(
+                updated_at.humanize(),
+                Style::default().fg(state.color_scheme.muted.into()),
+            ));
+        }
 
-        // if let Some(count) = ctx.github.pr.changed_files {
-        //     write!(
-        //         buf,
-        //         " {} {}",
-        //         "·".with(ctx.color_scheme.muted.into()),
-        //         {
-        //             let mut s = String::new();
-        //             write!(
-        //                 s,
-        //                 "{} file{} changed",
-        //                 count,
-        //                 if count == 1 { "" } else { "s" }
-        //             )?;
-        //             s
-        //         }
-        //         .with(ctx.color_scheme.muted.into())
-        //     )?;
-        // }
+        if let Some(count) = pr.changed_files {
+            if !meta.is_empty() {
+                meta.push(Span::styled(
+                    "  ·  ",
+                    Style::default().fg(state.color_scheme.muted.into()),
+                ));
+            }
 
-        // writeln!(buf)?;
+            let label = format!(
+                "{} file{} changed",
+                count,
+                if count == 1 { "" } else { "s" }
+            );
+            meta.push(Span::styled(
+                label,
+                Style::default().fg(state.color_scheme.muted.into()),
+            ));
+        }
 
-        // Ok(())
+        if !meta.is_empty() {
+            lines.push(Line::from(meta));
+        }
+
+        lines.push(Line::default());
+
+        Paragraph::new(Text::from(lines)).render(area, buf);
     }
 }

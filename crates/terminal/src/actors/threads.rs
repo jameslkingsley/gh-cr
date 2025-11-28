@@ -5,7 +5,8 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
+use chrono_humanize::Humanize;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use octocrab::{
     models::CommentId,
@@ -13,8 +14,10 @@ use octocrab::{
 };
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
-    widgets::StatefulWidgetRef,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::{Paragraph, StatefulWidgetRef, Widget, Wrap},
 };
 use tokio::sync::oneshot::Receiver;
 
@@ -43,7 +46,7 @@ impl PartialOrd for ThreadKey {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Threads {
     threads: BTreeMap<ThreadKey, Vec<ThreadComment>>,
     comment_queue: VecDeque<PendingComment>,
@@ -56,18 +59,6 @@ pub struct Threads {
 pub struct PendingComment {
     pub in_reply_to: CommentId,
     pub content: String,
-}
-
-impl Default for Threads {
-    fn default() -> Self {
-        Self {
-            threads: BTreeMap::new(),
-            comment_queue: VecDeque::new(),
-            current_thread: None,
-            current_comment: None,
-            async_threads: None,
-        }
-    }
 }
 
 impl Threads {
@@ -94,7 +85,7 @@ impl Threads {
         };
 
         self.threads
-            .get_key_value(&current)
+            .get_key_value(current)
             .map(|(k, v)| (k, v.as_slice()))
             .ok_or_else(|| anyhow!("Thread not found"))
     }
@@ -278,93 +269,117 @@ impl StatefulWidgetRef for Threads {
             return;
         };
 
-        let first = &comments[0];
-
-        // let diff_hunk = first
-        //     .diff_hunk
-        //     .as_str()
-        //     .lines()
-        //     .map(|l| {
-        //         let mut chars = l.chars();
-
-        //         let Some(first) = chars.next() else {
-        //             return l.to_owned().with(state.color_scheme.diff_unchanged.into());
-        //         };
-
-        //         let rest: String = chars.collect();
-
-        //         match first {
-        //             '+' => format!("+  {}", rest).with(state.color_scheme.diff_added.into()),
-        //             '-' => format!("-  {}", rest).with(state.color_scheme.diff_removed.into()),
-        //             _ => format!("  {}", l).with(state.color_scheme.diff_unchanged.into()),
-        //         }
-        //     })
-        //     .try_fold(
-        //         {
-        //             let mut s = String::new();
-        //             let c = state.color_scheme.comment_body.into();
-        //             write!(
-        //                 s,
-        //                 "{}{}{}\n\n",
-        //                 first.path.as_str().with(c),
-        //                 ":".with(c),
-        //                 first
-        //                     .line
-        //                     .unwrap_or(first.original_line.unwrap_or(1))
-        //                     .to_string()
-        //                     .with(c)
-        //             )
-        //             .unwrap();
-        //             s
-        //         },
-        //         |mut acc, line| -> Result<String> {
-        //             writeln!(acc, "{}", line)?;
-        //             Ok(acc)
-        //         },
-        //     )
-        //     .unwrap();
-
-        // Paragraph::new(diff_hunk).render_ref(area, buf);
-
-        let layout = Layout::vertical(
-            comments
-                .iter()
-                .map(|c| Constraint::Length(c.layout_height())),
-        )
-        .spacing(1)
-        .flex(ratatui::layout::Flex::Start)
-        .split(area);
-
-        for (index, comment) in comments.iter().enumerate() {
-            comment.render_ref(layout[index], buf, state);
+        if comments.is_empty() {
+            return;
         }
 
-        // let mut controls = String::new();
+        let first = &comments[0];
+        let total_threads = self.threads.len().max(1);
+        let current_index = self.current_thread_index().map(|i| i + 1).unwrap_or(1);
 
-        // write!(controls, "  ←/→ thread")?;
-        // write!(controls, "  (r)eply")?;
-        // write!(controls, "  (q)uit")?;
+        let delta = TimeDelta::from_std(state.delta()).unwrap_or_else(|_| TimeDelta::zero());
+        let age = first
+            .created_at
+            .checked_add_signed(delta)
+            .unwrap_or(first.created_at)
+            .humanize();
 
-        // let thread_count = self.threads.len();
-        // let current_thread = self.current_thread_index()?;
-        // write!(
-        //     controls,
-        //     "  {}/{} thread{}",
-        //     current_thread + 1,
-        //     thread_count,
-        //     if thread_count > 1 { "s" } else { "" }
-        // )?;
+        let unresolved = true;
+        let status_color = if unresolved { Color::Red } else { Color::Green };
+        let status_label = if unresolved { "unresolved" } else { "resolved" };
+        let pr_title = state.github.pr.title.as_deref().unwrap_or("Pull Request");
+        let line_number = first.line.or(first.original_line).unwrap_or(1);
+        let wrap_width = usize::from(area.width.max(10).min(80));
 
-        // writeln!(buf, "{}", controls.with(ctx.color_scheme.muted.into()))?;
+        let mut lines: Vec<Line> = Vec::new();
 
-        // for pending_comment in self.comment_queue.iter() {
-        //     writeln!(
-        //         buf,
-        //         "- {} -> {}",
-        //         pending_comment.in_reply_to, pending_comment.content
-        //     )?;
-        // }
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("Thread {}/{} ", current_index, total_threads),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("({status_label}) "),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                pr_title,
+                Style::default().fg(state.color_scheme.pr_title.into()),
+            ),
+        ]));
 
-        // Ok(())
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{}:{}", first.path, line_number),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::raw("    "),
+            Span::styled(status_label, Style::default().fg(status_color)),
+            Span::raw("    "),
+            Span::styled(age, Style::default().fg(Color::DarkGray)),
+        ]));
+
+        lines.push(Line::default());
+
+        for raw_line in first.diff_hunk.lines() {
+            let (prefix, color, text) = match raw_line.chars().next() {
+                Some('+') => (
+                    "+ ",
+                    Color::from(state.color_scheme.diff_added),
+                    raw_line[1..].to_string(),
+                ),
+                Some('-') => (
+                    "- ",
+                    Color::from(state.color_scheme.diff_removed),
+                    raw_line[1..].to_string(),
+                ),
+                _ => (
+                    "  ",
+                    Color::from(state.color_scheme.diff_unchanged),
+                    raw_line.to_string(),
+                ),
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(color)),
+                Span::styled(text, Style::default().fg(color)),
+            ]));
+        }
+
+        lines.push(Line::default());
+
+        let header_height = lines.len() as u16;
+        let header_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: header_height.min(area.height),
+        };
+
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .render(header_area, buf);
+
+        if header_height >= area.height {
+            return;
+        }
+
+        let mut y = area.y + header_height;
+
+        for comment in comments.iter() {
+            let height = comment.layout_height(wrap_width);
+            let rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height,
+            };
+
+            comment.render_ref(rect, buf, state);
+            y = y.saturating_add(height);
+        }
     }
 }

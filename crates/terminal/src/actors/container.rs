@@ -47,7 +47,8 @@ impl StatefulWidgetRef for Container<'_> {
 
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let size = size().expect("terminal size error");
-        let content_size = Size::new(size.0.min(80), size.1);
+        let content_height = size.1.saturating_mul(20).max(size.1);
+        let content_size = Size::new(size.0.min(80), content_height);
         let mut scroll_view = ScrollView::new(content_size)
             .scrollbars_visibility(tui_scrollview::ScrollbarVisibility::Always);
 
