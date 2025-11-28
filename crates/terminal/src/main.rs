@@ -4,7 +4,7 @@ use clap::Parser;
 use github::{GitHub, guess_pr::guess_pull_request};
 
 use crate::{
-    actors::{header::Header, threads::Threads},
+    actors::threads::Threads,
     app::{App, Context, run_app},
     color_scheme::{ColorScheme, Rgb},
 };

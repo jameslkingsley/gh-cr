@@ -1,12 +1,11 @@
 use std::{
-    borrow::Cow,
     cmp::Ordering,
     collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
 };
 
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use chrono_humanize::Humanize;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use octocrab::{
@@ -16,9 +15,9 @@ use octocrab::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style, Stylize},
+    style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Clear, List, ListItem, Paragraph, StatefulWidgetRef, Widget, Wrap},
+    widgets::{List, ListItem, StatefulWidgetRef, Widget},
 };
 use tokio::sync::oneshot::Receiver;
 
@@ -277,101 +276,6 @@ impl StatefulWidgetRef for Threads {
         let list = List::new(comments);
 
         list.render(area, buf);
-
-        // let first = &comments[0];
-        // let total_threads = self.threads.len().max(1);
-        // let current_index = self.current_thread_index().map(|i| i + 1).unwrap_or(1);
-
-        // let delta = TimeDelta::from_std(state.delta()).unwrap_or_else(|_| TimeDelta::zero());
-        // let age = first
-        //     .created_at
-        //     .checked_add_signed(delta)
-        //     .unwrap_or(first.created_at)
-        //     .humanize();
-
-        // let unresolved = true;
-        // let status_color = if unresolved { Color::Red } else { Color::Green };
-        // let status_label = if unresolved { "unresolved" } else { "resolved" };
-        // let pr_title = state.github.pr.title.as_deref().unwrap_or("Pull Request");
-        // let line_number = first.line.or(first.original_line).unwrap_or(1);
-        // let wrap_width = usize::from(area.width.max(10).min(80));
-
-        // let mut lines: Vec<Line> = Vec::new();
-
-        // lines.push(Line::from(vec![
-        //     Span::styled(
-        //         format!("Thread {}/{} ", current_index, total_threads),
-        //         Style::default().add_modifier(Modifier::BOLD),
-        //     ),
-        //     Span::styled(
-        //         format!("({status_label}) "),
-        //         Style::default()
-        //             .fg(status_color)
-        //             .add_modifier(Modifier::BOLD),
-        //     ),
-        //     Span::raw("  "),
-        //     Span::styled(
-        //         pr_title,
-        //         Style::default().fg(state.color_scheme.pr_title.into()),
-        //     ),
-        // ]));
-
-        // lines.push(Line::from(vec![
-        //     Span::styled(
-        //         format!("{}:{}", first.path, line_number),
-        //         Style::default().fg(Color::Cyan),
-        //     ),
-        //     Span::raw("    "),
-        //     Span::styled(status_label, Style::default().fg(status_color)),
-        //     Span::raw("    "),
-        //     Span::styled(age, Style::default().fg(Color::DarkGray)),
-        // ]));
-
-        // lines.push(Line::default());
-
-        // for raw_line in first.diff_hunk.lines() {
-        //     let (prefix, color, text) = match raw_line.chars().next() {
-        //         Some('+') => (
-        //             "+ ",
-        //             Color::from(state.color_scheme.diff_added),
-        //             raw_line[1..].to_string(),
-        //         ),
-        //         Some('-') => (
-        //             "- ",
-        //             Color::from(state.color_scheme.diff_removed),
-        //             raw_line[1..].to_string(),
-        //         ),
-        //         _ => (
-        //             "  ",
-        //             Color::from(state.color_scheme.diff_unchanged),
-        //             raw_line.to_string(),
-        //         ),
-        //     };
-
-        //     lines.push(Line::from(vec![
-        //         Span::styled(prefix, Style::default().fg(color)),
-        //         Span::styled(text, Style::default().fg(color)),
-        //     ]));
-        // }
-
-        // lines.push(Line::default());
-
-        // let header_height = lines.len() as u16;
-        // let header_area = Rect {
-        //     x: area.x,
-        //     y: area.y,
-        //     width: area.width,
-        //     height: header_height.min(area.height),
-        // };
-
-        // Paragraph::new(Text::from(lines))
-        //     .wrap(Wrap { trim: false })
-        //     .render(header_area, buf);
-
-        // if header_height >= area.height {
-        //     return;
-        // }
-        //
     }
 }
 
@@ -390,63 +294,48 @@ impl<'a> From<&'a ThreadComment> for ListItem<'a> {
         content.push_span(" ");
         content.push_span(Span::styled(created_at, Style::new().dark_gray()));
 
-        // let wrapped = textwrap::wrap(&c.body, 80);
-        // for wrapped_line in wrapped {
-        // let body = tui_markdown::from_str(wrapped_line);
-        for line in textwrap::wrap(&c.body, 80) {
-            // for line in body.lines {
-            content.push_line(Line::raw(line).style(Style::new().gray()));
-        }
-        // }
-        // let body = tui_markdown::from_str(&c.body);
-        // for line in textwrap::wrap(&c.body, 80) {
-        // for line in body.lines {
-        // content.push_line(line.style(Style::new().gray()));
-        // }
+        let mut in_code_block = false;
+        let mut current_text = String::new();
 
-        // stylize_block(&mut content, Style::new().dark_gray());
+        for line in c.body.lines() {
+            if line.trim_start().starts_with("```") {
+                // Process accumulated text before code block
+                if !current_text.is_empty() && !in_code_block {
+                    for wrapped_line in textwrap::wrap(&current_text, 80) {
+                        content.push_line(
+                            Line::raw(wrapped_line.into_owned()).style(Style::new().gray()),
+                        );
+                    }
+                    current_text.clear();
+                }
+
+                // Toggle code block state and add the line as-is
+                in_code_block = !in_code_block;
+                content.push_line(Line::raw(line).style(Style::new().dark_gray()));
+            } else if in_code_block {
+                // In code block: add line as-is without wrapping
+                content.push_line(Line::raw(line).style(Style::new().dark_gray()));
+            } else {
+                // Not in code block: accumulate text for wrapping
+                if !current_text.is_empty() {
+                    current_text.push('\n');
+                }
+                current_text.push_str(line);
+            }
+        }
+
+        // Process any remaining accumulated text
+        if !current_text.is_empty() {
+            for wrapped_line in textwrap::wrap(&current_text, 80) {
+                content.push_line(Line::raw(wrapped_line.into_owned()).style(Style::new().gray()));
+            }
+        }
+
+        stylize_block(&mut content, Style::new().dark_gray());
+
+        // Spacer
+        content.push_line("");
 
         ListItem::new(content)
     }
 }
-
-// let time_delta = TimeDelta::from_std(state.delta()).expect("invalid delta");
-// let author = self
-//     .user
-//     .as_ref()
-//     .map(|a| a.login.as_str())
-//     .unwrap_or("(unknown)");
-// let created_at = self
-//     .created_at
-//     .checked_add_signed(time_delta)
-//     .unwrap_or(self.created_at)
-//     .humanize();
-
-// let wrap_width = usize::from(area.width.max(10).min(80));
-
-// let mut lines: Vec<Line> = Vec::new();
-// lines.push(Line::from(vec![
-//     Span::styled(
-//         author,
-//         Style::default()
-//             .fg(state.color_scheme.author.into())
-//             .add_modifier(Modifier::BOLD),
-//     ),
-//     Span::raw("  "),
-//     Span::styled(
-//         created_at,
-//         Style::default().fg(state.color_scheme.muted.into()),
-//     ),
-// ]));
-
-// lines.push(Line::default());
-
-// for wrapped in self.wrapped_body_with_width(wrap_width) {
-//     lines.push(Line::from(Span::raw(wrapped.into_owned())));
-// }
-
-// lines.push(Line::default());
-
-// Paragraph::new(Text::from(lines))
-//     .wrap(Wrap { trim: false })
-//     .render(area, buf);

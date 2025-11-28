@@ -24,5 +24,3 @@ textwrap = "0.16.1"
 arc-swap = { version = "1.7.1", features = ["serde"] }
 futures-timer = "3.0.3"
 ratatui = { version = "0.29.0", features = ["unstable-widget-ref"] }
-tui-scrollview = "0.5.3"
-tui-markdown = "0.3.6"

@@ -5,9 +5,8 @@ use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
 use futures::{FutureExt, StreamExt};
 use futures_timer::Delay;
 use github::{GitHub, Initialised};
-use ratatui::{buffer::Cell, prelude::*, widgets::Clear};
+use ratatui::prelude::*;
 use tokio::{select, task::yield_now, time::Instant};
-use tui_scrollview::ScrollViewState;
 
 use crate::{actors::Actor, color_scheme::ColorScheme};
 
@@ -26,13 +25,9 @@ pub async fn run_app(mut app: App) -> Result<()> {
 
         app.poll_async_widgets()?;
 
-        // if app.is_dirty() {
-        // terminal.clear()?;
         terminal.draw(|frame| {
-            // clear_every_cell(frame);
             frame.render_widget(&mut app, frame.area());
         })?;
-        // }
 
         select! {
             _ = delay => {},
@@ -88,7 +83,6 @@ impl Context {
 pub struct App {
     ctx: Arc<Context>,
     actors: Vec<Box<dyn Actor>>,
-    scroll_state: ScrollViewState,
     dirty: bool,
 }
 
@@ -112,7 +106,6 @@ impl App {
         Self {
             ctx: Arc::new(ctx),
             actors: widgets,
-            scroll_state: ScrollViewState::new(),
             dirty: true,
         }
     }
@@ -153,27 +146,27 @@ impl App {
             Event::Key(key) => {
                 match key.code {
                     KeyCode::Down if key.modifiers.is_empty() => {
-                        self.scroll_state.scroll_down();
+                        // TODO: self.scroll_state.scroll_down();
                         self.dirty = true;
                     }
                     KeyCode::PageDown if key.modifiers.is_empty() => {
-                        self.scroll_state.scroll_page_down();
+                        // TODO: self.scroll_state.scroll_page_down();
                         self.dirty = true;
                     }
                     KeyCode::Up if key.modifiers.is_empty() => {
-                        self.scroll_state.scroll_up();
+                        // TODO: self.scroll_state.scroll_up();
                         self.dirty = true;
                     }
                     KeyCode::PageUp if key.modifiers.is_empty() => {
-                        self.scroll_state.scroll_page_up();
+                        // TODO: self.scroll_state.scroll_page_up();
                         self.dirty = true;
                     }
                     KeyCode::Home if key.modifiers.is_empty() => {
-                        self.scroll_state.scroll_to_top();
+                        // TODO: self.scroll_state.scroll_to_top();
                         self.dirty = true;
                     }
                     KeyCode::End if key.modifiers.is_empty() => {
-                        self.scroll_state.scroll_to_bottom();
+                        // TODO: self.scroll_state.scroll_to_bottom();
                         self.dirty = true;
                     }
                     _ => {}
@@ -212,24 +205,6 @@ impl App {
 
         for actor in &self.actors {
             actor.render_ref(content, buf, &mut self.ctx.clone());
-        }
-    }
-}
-
-pub fn clear_every_cell(frame: &mut Frame) {
-    let buf = frame.buffer_mut();
-    let area = buf.area();
-
-    let x0 = area.x;
-    let y0 = area.y;
-    let x1 = x0 + area.width;
-    let y1 = y0 + area.height;
-
-    for y in y0..y1 {
-        for x in x0..x1 {
-            if let Some(cell) = buf.cell_mut((x, y)) {
-                *cell = Cell::new("?");
-            }
         }
     }
 }

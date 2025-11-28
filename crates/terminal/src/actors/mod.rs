@@ -6,9 +6,7 @@ use ratatui::widgets::StatefulWidgetRef;
 
 use crate::app::Context;
 
-pub mod bordered;
 pub mod comment;
-pub mod container;
 pub mod header;
 pub mod threads;
 
