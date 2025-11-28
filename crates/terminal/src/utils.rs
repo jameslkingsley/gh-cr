@@ -17,7 +17,25 @@ use crossterm::{
         enable_raw_mode,
     },
 };
+use ratatui::{
+    style::Style,
+    text::{Span, Text},
+};
 use tempfile::NamedTempFile;
+
+pub fn stylize_block(text: &mut Text, style: Style) {
+    let line_len = text.lines.len();
+    for (index, line) in text.iter_mut().enumerate() {
+        let block = match index {
+            0 if line_len == 1 => "",
+            0 if line_len > 1 => "╭ ",
+            _ if index + 1 == line_len => "╰ ",
+            _ => "│ ",
+        };
+
+        line.spans.insert(0, Span::raw(block).style(style));
+    }
+}
 
 pub fn write_stylized_block(buf: &mut String, block: String, color: Color) -> std::fmt::Result {
     let lines = block.lines().collect::<Vec<_>>();

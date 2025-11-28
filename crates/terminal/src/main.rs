@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     };
 
     let ctx = Context::new(github, color_scheme);
-    let app = App::new(ctx, vec![Box::new(Header), Box::new(Threads::default())]);
+    let app = App::new(ctx, vec![Box::new(Threads::default())]);
 
     run_app(app).await?;
 

@@ -5,17 +5,16 @@ use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
 use futures::{FutureExt, StreamExt};
 use futures_timer::Delay;
 use github::{GitHub, Initialised};
-use ratatui::{prelude::*, widgets::StatefulWidgetRef};
+use ratatui::{buffer::Cell, prelude::*, widgets::Clear};
 use tokio::{select, task::yield_now, time::Instant};
 use tui_scrollview::ScrollViewState;
 
-use crate::{
-    actors::{Actor, container::Container},
-    color_scheme::ColorScheme,
-};
+use crate::{actors::Actor, color_scheme::ColorScheme};
 
 pub async fn run_app(mut app: App) -> Result<()> {
     let mut terminal = ratatui::init();
+
+    terminal.clear()?;
 
     let mut event_stream = EventStream::new();
 
@@ -27,11 +26,13 @@ pub async fn run_app(mut app: App) -> Result<()> {
 
         app.poll_async_widgets()?;
 
-        if app.is_dirty() {
-            terminal.draw(|frame| {
-                frame.render_widget(&mut app, frame.area());
-            })?;
-        }
+        // if app.is_dirty() {
+        // terminal.clear()?;
+        terminal.draw(|frame| {
+            // clear_every_cell(frame);
+            frame.render_widget(&mut app, frame.area());
+        })?;
+        // }
 
         select! {
             _ = delay => {},
@@ -96,7 +97,7 @@ impl Widget for &mut App {
     where
         Self: Sized,
     {
-        self.render_to_buffer(area, buf).expect("render panic");
+        self.render_to_buffer(area, buf);
     }
 }
 
@@ -194,13 +195,41 @@ impl App {
         Ok(())
     }
 
-    pub fn render_to_buffer(&mut self, area: Rect, buf: &mut Buffer) -> Result<()> {
-        let container = Container {
-            actors: self.actors.as_slice(),
-        };
+    pub fn render_to_buffer(&mut self, area: Rect, buf: &mut Buffer) {
+        let [header, main, footer] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
 
-        container.render_ref(area, buf, &mut (self.scroll_state, self.ctx.clone()));
+        let [content, side] =
+            Layout::horizontal([Constraint::Length(80), Constraint::Fill(1)]).areas(main);
 
-        Ok(())
+        Line::raw("Header line").render(header, buf);
+        Line::raw("Footer line").render(footer, buf);
+        Line::raw("Side").render(side, buf);
+
+        for actor in &self.actors {
+            actor.render_ref(content, buf, &mut self.ctx.clone());
+        }
+    }
+}
+
+pub fn clear_every_cell(frame: &mut Frame) {
+    let buf = frame.buffer_mut();
+    let area = buf.area();
+
+    let x0 = area.x;
+    let y0 = area.y;
+    let x1 = x0 + area.width;
+    let y1 = y0 + area.height;
+
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                *cell = Cell::new("?");
+            }
+        }
     }
 }
