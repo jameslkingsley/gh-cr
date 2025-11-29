@@ -21,7 +21,7 @@ pub fn wrap_markdown_body(
         if line.trim_start().starts_with("```") {
             // Process accumulated text before code block
             if !current_text.is_empty() && !in_code_block {
-                for wrapped_line in textwrap::wrap(&current_text, 80) {
+                for wrapped_line in textwrap::wrap(&current_text, width) {
                     output.push_line(Line::raw(wrapped_line.into_owned()).style(text_style));
                 }
                 current_text.clear();

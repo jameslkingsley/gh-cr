@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
-use chrono_humanize::Humanize;
 use octocrab::{
     models::CommentId,
     params::{Direction, pulls::comments::Sort},
@@ -15,9 +14,7 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{Event, KeyCode, KeyModifiers},
     layout::Rect,
-    style::{Style, Stylize},
-    text::{Line, Span, Text},
-    widgets::{ListItem, StatefulWidgetRef},
+    widgets::StatefulWidgetRef,
 };
 use tokio::sync::oneshot::Receiver;
 
@@ -25,8 +22,42 @@ use crate::{
     actor_task,
     actors::{Actor, comment::ThreadComment},
     app::Context,
-    utils::{stylize_block, suspend_for_editor},
+    utils::suspend_for_editor,
 };
+
+impl StatefulWidgetRef for Threads {
+    type State = Arc<Context>;
+
+    fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let Ok((_, comments)) = self.current_thread() else {
+            return;
+        };
+
+        if comments.is_empty() {
+            return;
+        }
+
+        let mut y = 0;
+
+        for comment in comments {
+            if y >= area.height {
+                break;
+            }
+
+            let height = comment.layout_height(area.width);
+            let remaining_height = area.height.saturating_sub(y);
+            if remaining_height == 0 {
+                break;
+            }
+
+            let comment_area =
+                Rect::new(area.x, area.y + y, area.width, height.min(remaining_height));
+
+            comment.render_ref(comment_area, buf, state);
+            y = y.saturating_add(height);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadKey {
@@ -276,100 +307,5 @@ impl Actor for Threads {
                 acc.saturating_add(u32::from(comment.layout_height(area.width)))
             })
             .min(u16::MAX as u32) as u16
-    }
-}
-
-impl StatefulWidgetRef for Threads {
-    type State = Arc<Context>;
-
-    fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let Ok((_, comments)) = self.current_thread() else {
-            return;
-        };
-
-        if comments.is_empty() {
-            return;
-        }
-
-        let mut y = 0;
-
-        for comment in comments {
-            if y >= area.height {
-                break;
-            }
-
-            let height = comment.layout_height(area.width);
-            let remaining_height = area.height.saturating_sub(y);
-            if remaining_height == 0 {
-                break;
-            }
-
-            let comment_area =
-                Rect::new(area.x, area.y + y, area.width, height.min(remaining_height));
-
-            comment.render_ref(comment_area, buf, state);
-            y = y.saturating_add(height);
-        }
-    }
-}
-
-impl<'a> From<&'a ThreadComment> for ListItem<'a> {
-    fn from(c: &'a ThreadComment) -> Self {
-        let created_at = c.created_at.humanize();
-        let author = c
-            .user
-            .as_ref()
-            .map(|a| a.login.to_owned())
-            .unwrap_or("(unknown)".to_owned());
-
-        let mut content = Text::default();
-
-        content.push_span(Span::styled(author, Style::new().cyan()));
-        content.push_span(" ");
-        content.push_span(Span::styled(created_at, Style::new().dark_gray()));
-
-        let mut in_code_block = false;
-        let mut current_text = String::new();
-
-        for line in c.body.lines() {
-            if line.trim_start().starts_with("```") {
-                // Process accumulated text before code block
-                if !current_text.is_empty() && !in_code_block {
-                    for wrapped_line in textwrap::wrap(&current_text, 80) {
-                        content.push_line(
-                            Line::raw(wrapped_line.into_owned()).style(Style::new().gray()),
-                        );
-                    }
-                    current_text.clear();
-                }
-
-                // Toggle code block state and add the line as-is
-                in_code_block = !in_code_block;
-                content.push_line(Line::raw(line).style(Style::new().dark_gray()));
-            } else if in_code_block {
-                // In code block: add line as-is without wrapping
-                content.push_line(Line::raw(line).style(Style::new().dark_gray()));
-            } else {
-                // Not in code block: accumulate text for wrapping
-                if !current_text.is_empty() {
-                    current_text.push('\n');
-                }
-                current_text.push_str(line);
-            }
-        }
-
-        // Process any remaining accumulated text
-        if !current_text.is_empty() {
-            for wrapped_line in textwrap::wrap(&current_text, 80) {
-                content.push_line(Line::raw(wrapped_line.into_owned()).style(Style::new().gray()));
-            }
-        }
-
-        stylize_block(&mut content, Style::new().dark_gray());
-
-        // Spacer
-        content.push_line("");
-
-        ListItem::new(content)
     }
 }

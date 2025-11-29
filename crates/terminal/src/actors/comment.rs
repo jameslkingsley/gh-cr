@@ -17,6 +17,42 @@ use crate::{
     utils::{stylize_block, wrap_markdown_body},
 };
 
+impl StatefulWidgetRef for ThreadComment {
+    type State = Arc<Context>;
+
+    fn render_ref(&self, area: Rect, buf: &mut Buffer, _state: &mut Self::State) {
+        let created_at = self.created_at.humanize();
+        let author = self
+            .user
+            .as_ref()
+            .map(|a| a.login.to_owned())
+            .unwrap_or("(unknown)".to_owned());
+
+        let mut lines: Vec<Line> = Vec::new();
+
+        lines.push(Line::from_iter([
+            Span::styled(author, Style::default().cyan()),
+            Span::raw(" "),
+            Span::styled(created_at, Style::default().dim()),
+        ]));
+
+        let mut content = Text::from(lines);
+
+        wrap_markdown_body(
+            &self.sanitised_body(),
+            // Subtract 2 because the stylised block consumes 2 columns
+            area.width.saturating_sub(2) as usize,
+            &mut content,
+            Style::new().gray(),
+            Style::new().dark_gray(),
+        );
+
+        stylize_block(&mut content, Style::new().dark_gray());
+
+        Paragraph::new(content).render(area, buf);
+    }
+}
+
 #[derive(Debug)]
 pub struct ThreadComment(pub Comment);
 
@@ -44,43 +80,10 @@ impl ThreadComment {
     pub fn layout_height(&self, area_width: u16) -> u16 {
         self.wrapped_body(area_width).len() as u16 + 3
     }
-}
 
-impl StatefulWidgetRef for ThreadComment {
-    type State = Arc<Context>;
-
-    fn render_ref(&self, area: Rect, buf: &mut Buffer, _state: &mut Self::State) {
-        let created_at = self.created_at.humanize();
-        let author = self
-            .user
-            .as_ref()
-            .map(|a| a.login.to_owned())
-            .unwrap_or("(unknown)".to_owned());
-
-        let mut lines: Vec<Line> = Vec::new();
-
-        lines.push(Line::from_iter([
-            Span::styled(author, Style::default().cyan()),
-            Span::raw(" "),
-            Span::styled(created_at, Style::default().dim()),
-        ]));
-
-        let mut content = Text::from(lines);
-
-        wrap_markdown_body(
-            &self.body,
-            80,
-            &mut content,
-            Style::new().gray(),
-            Style::new().dark_gray(),
-        );
-
-        // Consumes two columns
-        stylize_block(&mut content, Style::new().dark_gray());
-
-        Paragraph::new(content)
-            // .wrap(Wrap { trim: false })
-            .render(area, buf);
+    pub fn sanitised_body(&self) -> String {
+        // Fixes ghost characters left by tabs
+        self.body.replace("\t", "    ")
     }
 }
 
