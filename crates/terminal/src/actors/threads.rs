@@ -37,9 +37,11 @@ impl StatefulWidgetRef for Threads {
             return;
         }
 
+        const GAP: u16 = 1;
+
         let mut y = 0;
 
-        for comment in comments {
+        for (idx, comment) in comments.iter().enumerate() {
             if y >= area.height {
                 break;
             }
@@ -55,6 +57,10 @@ impl StatefulWidgetRef for Threads {
 
             comment.render_ref(comment_area, buf, state);
             y = y.saturating_add(height);
+
+            if idx + 1 < comments.len() && y < area.height {
+                y = y.saturating_add(GAP.min(area.height.saturating_sub(y)));
+            }
         }
     }
 }
@@ -293,6 +299,8 @@ impl Actor for Threads {
     }
 
     fn content_height(&self, area: Rect) -> u16 {
+        const GAP: u16 = 1;
+
         let Ok((_, comments)) = self.current_thread() else {
             return area.height;
         };
@@ -301,9 +309,11 @@ impl Actor for Threads {
             return area.height;
         }
 
+        let gaps = (comments.len().saturating_sub(1) as u32) * u32::from(GAP);
+
         comments
             .iter()
-            .fold(0u32, |acc, comment| {
+            .fold(gaps, |acc, comment| {
                 acc.saturating_add(u32::from(comment.layout_height(area.width)))
             })
             .min(u16::MAX as u32) as u16

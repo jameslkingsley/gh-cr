@@ -38,6 +38,12 @@ impl Deref for ThreadComment {
 }
 
 impl ThreadComment {
+    fn wrap_width(area_width: u16) -> usize {
+        // Stylize block consumes 2 columns; clamp to a sensible range.
+        let available = area_width.saturating_sub(2).max(1);
+        usize::from(available).min(80)
+    }
+
     pub fn as_text(&self, width: u16) -> Text<'_> {
         let created_at = self.created_at.humanize();
         let author = self
@@ -58,8 +64,7 @@ impl ThreadComment {
 
         wrap_markdown_body(
             &self.sanitised_body(),
-            // Subtract 2 because the stylised block consumes 2 columns
-            width.saturating_sub(2) as usize,
+            Self::wrap_width(width),
             &mut content,
             Style::new().gray(),
             Style::new().dark_gray(),
