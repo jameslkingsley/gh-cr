@@ -276,7 +276,7 @@ impl App {
     }
 
     fn blit_content(&self, src: &Buffer, viewport: Rect, dest: &mut Buffer) {
-        let blank = Cell::new("—");
+        let blank = Cell::default();
         let src_height = src.area.height as usize;
 
         for y in 0..viewport.height {
