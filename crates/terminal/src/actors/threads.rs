@@ -7,17 +7,17 @@ use std::{
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use chrono_humanize::Humanize;
-use crossterm::event::{Event, KeyCode, KeyModifiers};
 use octocrab::{
     models::CommentId,
     params::{Direction, pulls::comments::Sort},
 };
 use ratatui::{
     buffer::Buffer,
+    crossterm::event::{Event, KeyCode, KeyModifiers},
     layout::Rect,
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{List, ListItem, StatefulWidgetRef, Widget},
+    widgets::{ListItem, StatefulWidgetRef},
 };
 use tokio::sync::oneshot::Receiver;
 
@@ -55,6 +55,7 @@ pub struct Threads {
     async_threads: Option<Receiver<BTreeMap<ThreadKey, Vec<ThreadComment>>>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct PendingComment {
     pub in_reply_to: CommentId,
@@ -259,12 +260,29 @@ impl Actor for Threads {
     fn dirty(&self) -> bool {
         false
     }
+
+    fn content_height(&self, area: Rect) -> u16 {
+        let Ok((_, comments)) = self.current_thread() else {
+            return area.height;
+        };
+
+        if comments.is_empty() {
+            return area.height;
+        }
+
+        comments
+            .iter()
+            .fold(0u32, |acc, comment| {
+                acc.saturating_add(u32::from(comment.layout_height(area.width)))
+            })
+            .min(u16::MAX as u32) as u16
+    }
 }
 
 impl StatefulWidgetRef for Threads {
     type State = Arc<Context>;
 
-    fn render_ref(&self, area: Rect, buf: &mut Buffer, _state: &mut Self::State) {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let Ok((_, comments)) = self.current_thread() else {
             return;
         };
@@ -273,9 +291,25 @@ impl StatefulWidgetRef for Threads {
             return;
         }
 
-        let list = List::new(comments);
+        let mut y = 0;
 
-        list.render(area, buf);
+        for comment in comments {
+            if y >= area.height {
+                break;
+            }
+
+            let height = comment.layout_height(area.width);
+            let remaining_height = area.height.saturating_sub(y);
+            if remaining_height == 0 {
+                break;
+            }
+
+            let comment_area =
+                Rect::new(area.x, area.y + y, area.width, height.min(remaining_height));
+
+            comment.render_ref(comment_area, buf, state);
+            y = y.saturating_add(height);
+        }
     }
 }
 

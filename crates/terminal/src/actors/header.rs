@@ -11,6 +11,7 @@ use ratatui::{
 
 use crate::{actors::Actor, app::Context};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Header;
 

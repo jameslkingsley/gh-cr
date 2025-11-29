@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use crossterm::event::Event;
-use ratatui::widgets::StatefulWidgetRef;
+use ratatui::{crossterm::event::Event, layout::Rect, widgets::StatefulWidgetRef};
 
 use crate::app::Context;
 
@@ -44,5 +43,9 @@ pub trait Actor: std::fmt::Debug + StatefulWidgetRef<State = Arc<Context>> {
 
     fn dirty(&self) -> bool {
         false
+    }
+
+    fn content_height(&self, area: Rect) -> u16 {
+        area.height
     }
 }

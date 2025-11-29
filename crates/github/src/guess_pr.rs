@@ -1,6 +1,7 @@
+use std::ffi::OsStr;
+
 use anyhow::{Result, anyhow};
 use serde_json::Value;
-use std::ffi::OsStr;
 use tokio::process::Command;
 
 pub struct GuessedPullRequest {

@@ -1,10 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-
 use github::{GitHub, guess_pr::guess_pull_request};
 
 use crate::{
-    actors::threads::Threads,
     app::{App, Context, run_app},
     color_scheme::{ColorScheme, Rgb},
 };
@@ -60,7 +58,7 @@ async fn main() -> Result<()> {
     };
 
     let ctx = Context::new(github, color_scheme);
-    let app = App::new(ctx, vec![Box::new(Threads::default())]);
+    let app = App::new(ctx);
 
     run_app(app).await?;
 

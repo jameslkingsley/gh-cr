@@ -1,27 +1,54 @@
-use std::{
-    env,
-    fmt::{Display, Write},
-    fs,
-    io::{Write as _, stdout},
-    process::Command,
-};
+use std::{env, fs, io::Write, process::Command};
 
 use anyhow::{Result, anyhow};
-use crossterm::{
-    cursor::{Hide, Show},
-    event::DisableMouseCapture,
-    execute,
-    style::{Color, Stylize},
-    terminal::{
-        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
-    },
-};
 use ratatui::{
     style::Style,
-    text::{Span, Text},
+    text::{Line, Span, Text},
 };
 use tempfile::NamedTempFile;
+
+pub fn wrap_markdown_body(
+    body: &str,
+    width: usize,
+    output: &mut Text,
+    text_style: Style,
+    code_style: Style,
+) {
+    let mut in_code_block = false;
+    let mut current_text = String::with_capacity(body.len());
+
+    for line in body.lines() {
+        if line.trim_start().starts_with("```") {
+            // Process accumulated text before code block
+            if !current_text.is_empty() && !in_code_block {
+                for wrapped_line in textwrap::wrap(&current_text, 80) {
+                    output.push_line(Line::raw(wrapped_line.into_owned()).style(text_style));
+                }
+                current_text.clear();
+            }
+
+            // Toggle code block state and add the line as-is
+            in_code_block = !in_code_block;
+            output.push_line(Line::raw(line.to_owned()).style(code_style));
+        } else if in_code_block {
+            // In code block: add line as-is without wrapping
+            output.push_line(Line::raw(line.to_owned()).style(code_style));
+        } else {
+            // Not in code block: accumulate text for wrapping
+            if !current_text.is_empty() {
+                current_text.push('\n');
+            }
+            current_text.push_str(line);
+        }
+    }
+
+    // Process any remaining accumulated text
+    if !current_text.is_empty() {
+        for wrapped_line in textwrap::wrap(&current_text, width) {
+            output.push_line(Line::raw(wrapped_line.into_owned()).style(text_style));
+        }
+    }
+}
 
 pub fn stylize_block(text: &mut Text, style: Style) {
     let line_len = text.lines.len();
@@ -37,62 +64,8 @@ pub fn stylize_block(text: &mut Text, style: Style) {
     }
 }
 
-pub fn write_stylized_block(buf: &mut String, block: String, color: Color) -> std::fmt::Result {
-    let lines = block.lines().collect::<Vec<_>>();
-
-    if lines.is_empty() {
-        writeln!(buf, "{}", "│".with(color))?;
-        return Ok(());
-    }
-
-    for (i, line) in lines.iter().enumerate() {
-        let block = match i {
-            0 if lines.len() == 1 => "",
-            0 if lines.len() > 1 => "╭",
-            _ if i + 1 == lines.len() => "╰",
-            _ => "│",
-        };
-
-        if line.is_empty() {
-            writeln!(buf, "{}", block.with(color))?;
-        } else {
-            writeln!(buf, "{} {}", block.with(color), line)?;
-        }
-    }
-
-    Ok(())
-}
-
-pub fn hyperlink<Text: Display, Url: Display>(
-    buf: &mut String,
-    text: Text,
-    url: Url,
-) -> Result<(), std::fmt::Error> {
-    write!(buf, "\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
-}
-
-pub fn enter_terminal() -> Result<()> {
-    let mut out = stdout();
-    enable_raw_mode()?;
-    execute!(
-        out,
-        EnterAlternateScreen,
-        Clear(ClearType::All),
-        Hide,
-        DisableMouseCapture
-    )?;
-    Ok(())
-}
-
-pub fn leave_terminal() -> Result<()> {
-    let mut out = stdout();
-    disable_raw_mode().ok();
-    execute!(out, DisableMouseCapture, Show, LeaveAlternateScreen)?;
-    Ok(())
-}
-
 pub fn suspend_for_editor(initial_contents: String) -> Result<String> {
-    leave_terminal()?;
+    // leave_terminal()?;
 
     let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
 
@@ -107,7 +80,7 @@ pub fn suspend_for_editor(initial_contents: String) -> Result<String> {
 
     let body = fs::read_to_string(tempfile.path())?;
 
-    enter_terminal()?;
+    // enter_terminal()?;
 
     Ok(body)
 }

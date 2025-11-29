@@ -1,5 +1,4 @@
-use crossterm::style::Color;
-use ratatui::style::Color as TuiColor;
+use ratatui::{crossterm::style::Color, style::Color as TuiColor};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -13,7 +13,6 @@ use octocrab::{
     models::{Repository, pulls::PullRequest},
     pulls::PullRequestHandler,
 };
-
 use service::GitHubCLI;
 
 pub fn build_octocrab_client() -> Result<Octocrab, Infallible> {
