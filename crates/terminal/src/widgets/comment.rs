@@ -42,13 +42,13 @@ impl ThreadComment {
 
         let mut content = Text::from(lines);
 
-        // wrap_markdown_body(
-        //     &self.sanitised_body(),
-        //     Self::wrap_width(width),
-        //     &mut content,
-        //     Style::new().gray(),
-        //     Style::new().dark_gray(),
-        // );
+        wrap_markdown_body(
+            &self.sanitised_body(),
+            Self::wrap_width(width),
+            &mut content,
+            Style::new().gray(),
+            Style::new().dark_gray(),
+        );
 
         stylize_block(&mut content, Style::new().dark_gray());
 

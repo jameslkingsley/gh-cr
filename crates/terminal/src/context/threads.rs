@@ -17,7 +17,7 @@ use octocrab::{
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use tokio::sync::oneshot::{self, Receiver};
 
-use crate::{GH, utils::suspend_for_editor};
+use crate::{GH, states::AppState, utils::suspend_for_editor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadKey {
@@ -165,7 +165,7 @@ impl Threads {
         Ok(())
     }
 
-    pub fn tick(&mut self, event: &Event) -> Result<bool> {
+    pub fn tick(&mut self, event: &Event, state: &mut AppState) -> Result<bool> {
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right
@@ -201,7 +201,6 @@ impl Threads {
             && key.code == KeyCode::Char('r')
         {
             let (thread_key, _) = self.current_thread()?;
-            let _shift_held = key.modifiers.contains(KeyModifiers::SHIFT);
             // TODO: Set initial contents to comment thread
             let content = suspend_for_editor(String::new())?;
             self.queue_reply(PendingComment {

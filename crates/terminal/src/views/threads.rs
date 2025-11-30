@@ -1,9 +1,11 @@
 use std::u16;
 
+#[cfg(debug_assertions)]
+use ratatui::style::Stylize;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    text::Text,
+    text::{Line, Span},
     widgets::{StatefulWidget, StatefulWidgetRef, Widget},
 };
 
@@ -59,7 +61,13 @@ impl StatefulWidgetRef for ThreadsView<'_> {
 
         let pr_header = PullRequestHeader { ctx: self.ctx };
         pr_header.render_ref(header, buf, state);
-        Text::raw("Footer line").render(footer, buf);
+
+        Line::from_iter([
+            Span::raw("Footer line"),
+            #[cfg(debug_assertions)]
+            Span::from(format!(" | Render time: {:?}", state.render_time)).light_green(),
+        ])
+        .render(footer, buf);
 
         let virtual_height = content_height.max(1);
         let mut content_buf =

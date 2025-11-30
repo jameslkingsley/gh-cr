@@ -7,7 +7,7 @@ use octocrab::models::{Repository, pulls::PullRequest};
 use ratatui::crossterm::event::Event;
 use tokio::sync::oneshot::{self, Receiver};
 
-use crate::{Cli, GH, context::threads::Threads};
+use crate::{Cli, GH, context::threads::Threads, states::AppState};
 
 #[derive(Debug)]
 pub struct Context {
@@ -74,8 +74,8 @@ impl Context {
         Ok(())
     }
 
-    pub fn tick(&mut self, event: &Event) -> Result<bool> {
-        if self.threads.tick(event)? {
+    pub fn tick(&mut self, event: &Event, state: &mut AppState) -> Result<bool> {
+        if self.threads.tick(event, state)? {
             return Ok(true);
         }
         Ok(false)
