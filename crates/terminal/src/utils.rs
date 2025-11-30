@@ -4,10 +4,48 @@ use anyhow::{Result, anyhow};
 use ratatui::{
     buffer::{Buffer, Cell},
     layout::Rect,
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span, Text},
 };
+use syntect_assets::assets::HighlightingAssets;
 use tempfile::NamedTempFile;
+use tui_syntax_highlight::{Highlighter, syntect::highlighting::Theme};
+
+pub fn highlight_diff_hunk<'a>(diff: &'a str, theme: Theme) -> Text<'a> {
+    let diff = textwrap::dedent(diff)
+        .lines()
+        .map(|line| {
+            let Some(c) = line.chars().next() else {
+                return format!(" {line}\n");
+            };
+
+            match c {
+                '+' => format!("+ {}\n", line.split_once("+").unwrap().1),
+                '-' => format!("- {}\n", line.split_once("-").unwrap().1),
+                _ => format!(" {line}\n"),
+            }
+        })
+        .collect::<String>();
+
+    let assets = HighlightingAssets::from_binary();
+    let highlighter = Highlighter::new(theme);
+    let syntax_set = assets.get_syntax_set().unwrap();
+    let syntax = syntax_set
+        .find_syntax_by_token("diff")
+        .unwrap_or(syntax_set.find_syntax_plain_text());
+
+    let mut highlight = highlighter
+        .override_background(Color::Reset)
+        .line_numbers(false)
+        .highlight_lines(diff.lines(), syntax, &syntax_set)
+        .unwrap();
+
+    for line in &mut highlight.lines {
+        line.spans.insert(0, Span::raw("  "));
+    }
+
+    highlight
+}
 
 pub fn blit_content(src: &Buffer, viewport: Rect, dest: &mut Buffer, scroll_offset: usize) {
     let blank = Cell::default();

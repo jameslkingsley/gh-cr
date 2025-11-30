@@ -3,17 +3,14 @@ use std::u16;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::Color,
     text::Text,
     widgets::{StatefulWidget, StatefulWidgetRef, Widget},
 };
-use syntect_assets::assets::HighlightingAssets;
-use tui_syntax_highlight::Highlighter;
 
 use crate::{
     context::Context,
     states::AppState,
-    utils::blit_content,
+    utils::{blit_content, highlight_diff_hunk},
     widgets::{pr_header::PullRequestHeader, spinner::Spinner},
 };
 
@@ -49,7 +46,13 @@ impl StatefulWidgetRef for ThreadsView<'_> {
         ])
         .areas(main);
 
-        let content_height = self.content_height(content_viewport);
+        let diff_height = if state.show_diffs {
+            self.diff_height()
+        } else {
+            0
+        };
+
+        let content_height = self.content_height(content_viewport, diff_height);
         state
             .scroll
             .update_scrollbar_state(content_height, content_viewport.height);
@@ -62,11 +65,29 @@ impl StatefulWidgetRef for ThreadsView<'_> {
         let mut content_buf =
             Buffer::empty(Rect::new(0, 0, content_viewport.width, virtual_height));
 
-        if state.show_diffs {
-            self.render_diff(content_buf.area, &mut content_buf, state);
+        let mut y = 0u16;
+
+        if state.show_diffs && diff_height > 0 {
+            let diff_area_height = diff_height.min(content_buf.area.height) + 1;
+            let diff_area = Rect::new(
+                content_buf.area.x,
+                content_buf.area.y,
+                content_buf.area.width,
+                diff_area_height,
+            );
+            self.render_diff(diff_area, &mut content_buf, state);
+            y = y.saturating_add(diff_area_height);
         }
 
-        self.render_comments(content_buf.area, &mut content_buf, state);
+        if y < content_buf.area.height {
+            let comments_area = Rect::new(
+                content_buf.area.x,
+                content_buf.area.y + y,
+                content_buf.area.width,
+                content_buf.area.height.saturating_sub(y),
+            );
+            self.render_comments(comments_area, &mut content_buf, state);
+        }
 
         blit_content(&content_buf, content_viewport, buf, state.scroll.offset);
     }
@@ -100,23 +121,9 @@ impl ThreadsView<'_> {
             return;
         }
 
-        let diff = &comments[0].diff_hunk;
+        let diff = highlight_diff_hunk(&comments[0].diff_hunk, state.theme.syntect.clone());
 
-        let assets = HighlightingAssets::from_binary();
-        let theme = assets.get_theme("Nord").clone();
-        let highlighter = Highlighter::new(theme);
-        let syntax_set = assets.get_syntax_set().unwrap();
-        let syntax = syntax_set
-            .find_syntax_by_token("diff")
-            .unwrap_or(syntax_set.find_syntax_plain_text());
-
-        let highlight = highlighter
-            .override_background(Color::Reset)
-            .line_numbers(false)
-            .highlight_lines(diff.lines(), syntax, &syntax_set)
-            .unwrap();
-
-        highlight.render(area, buf);
+        diff.render(area, buf);
     }
 
     fn render_comments(&self, area: Rect, buf: &mut Buffer, state: &mut AppState) {
@@ -159,7 +166,7 @@ impl ThreadsView<'_> {
         }
     }
 
-    fn content_height(&self, area: Rect) -> u16 {
+    fn content_height(&self, area: Rect, diff_height: u16) -> u16 {
         const GAP: usize = 1;
 
         let Ok((_, comments)) = self.ctx.threads.current_thread() else {
@@ -170,7 +177,6 @@ impl ThreadsView<'_> {
             return area.height;
         }
 
-        let diff = self.diff_height();
         let gaps = comments.len().saturating_sub(1) * GAP;
 
         comments
@@ -179,7 +185,7 @@ impl ThreadsView<'_> {
                 acc.saturating_add(comment.layout_height(area.width))
             })
             .min(u16::MAX)
-            + diff
+            + diff_height
             + 2
     }
 }

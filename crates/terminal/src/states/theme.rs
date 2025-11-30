@@ -1,5 +1,13 @@
+use std::cell::LazyCell;
+
 use ratatui::{crossterm::style::Color, style::Color as TuiColor};
 use serde::{Deserialize, Serialize};
+use syntect_assets::assets::HighlightingAssets;
+use tui_syntax_highlight::syntect::highlighting::Theme;
+
+thread_local! {
+    static ASSETS: LazyCell<HighlightingAssets> = LazyCell::new(HighlightingAssets::from_binary);
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Rgb(pub u8, pub u8, pub u8);
@@ -15,6 +23,9 @@ pub struct ThemeState {
     pub diff_added: Rgb,
     pub diff_removed: Rgb,
     pub diff_unchanged: Rgb,
+
+    /// Syntax highlighting theme
+    pub syntect: Theme,
 }
 
 impl Default for ThemeState {
@@ -29,6 +40,7 @@ impl Default for ThemeState {
             diff_added: Rgb(218, 255, 166),
             diff_removed: Rgb(246, 144, 144),
             diff_unchanged: Rgb(51, 53, 68),
+            syntect: ASSETS.with(|a| a.get_theme("Nord").to_owned()),
         }
     }
 }
