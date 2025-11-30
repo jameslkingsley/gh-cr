@@ -165,7 +165,7 @@ impl Threads {
         Ok(())
     }
 
-    pub fn tick(&mut self, event: &Event, state: &mut AppState) -> Result<bool> {
+    pub fn tick(&mut self, event: &Event, _state: &mut AppState) -> Result<bool> {
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right

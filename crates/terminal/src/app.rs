@@ -22,8 +22,6 @@ pub async fn run_app<B: Backend>(
     ctx.init()?;
 
     loop {
-        if state.suspend {}
-
         state.throbber.calc_next();
 
         ctx.poll_async()?;
