@@ -1,24 +1,27 @@
+use std::sync::OnceLock;
+
 use anyhow::Result;
 use clap::Parser;
-use github::{GitHub, guess_pr::guess_pull_request};
+use github::GitHub;
 
-use crate::{
-    app::{App, Context, run_app},
-    color_scheme::{ColorScheme, Rgb},
-};
+use crate::{app::run_app, context::Context, states::AppState};
 
-mod actors;
 mod app;
-mod color_scheme;
+mod context;
+mod states;
 mod utils;
+mod views;
+mod widgets;
 
-#[derive(Debug, Parser)]
+pub static GH: OnceLock<GitHub> = OnceLock::new();
+
+#[derive(Debug, Clone, Parser)]
 #[command(
     author,
     version,
     about = "Review GitHub pull requests from your terminal."
 )]
-struct Cli {
+pub struct Cli {
     /// Override the inferred PR number
     #[arg(short, long)]
     pr: Option<u64>,
@@ -36,31 +39,16 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let guessed = guess_pull_request().await?;
+    let _ = GH.set(GitHub::new());
 
-    let github = GitHub::new()
-        .owner(cli.owner.clone().unwrap_or(guessed.owner))
-        .repo(cli.repo.clone().unwrap_or(guessed.repo))
-        .pr(cli.pr.unwrap_or(guessed.pr))
-        .build()
-        .await?;
+    let state = AppState::default();
+    let ctx = Context::new(cli);
 
-    let color_scheme = ColorScheme {
-        pr_title: Rgb(208, 208, 208),
-        muted: Rgb(51, 53, 68),
-        author: Rgb(18, 207, 192),
-        comment_body: Rgb(208, 208, 208),
-        border: Rgb(51, 53, 68),
-        border_active: Rgb(18, 207, 192),
-        diff_added: Rgb(218, 255, 166),
-        diff_removed: Rgb(246, 144, 144),
-        diff_unchanged: Rgb(51, 53, 68),
-    };
+    let mut terminal = ratatui::init();
 
-    let ctx = Context::new(github, color_scheme);
-    let app = App::new(ctx);
+    let result = run_app(&mut terminal, state, ctx).await;
 
-    run_app(app).await?;
+    ratatui::restore();
 
-    Ok(())
+    result
 }

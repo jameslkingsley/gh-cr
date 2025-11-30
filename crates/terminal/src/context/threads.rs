@@ -1,69 +1,23 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, VecDeque},
-    sync::Arc,
+    ops::Deref,
 };
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
+use futures::FutureExt;
 use octocrab::{
-    models::CommentId,
+    models::{
+        CommentId,
+        pulls::{Comment, PullRequest},
+    },
     params::{Direction, pulls::comments::Sort},
 };
-use ratatui::{
-    buffer::Buffer,
-    crossterm::event::{Event, KeyCode, KeyModifiers},
-    layout::Rect,
-    widgets::StatefulWidgetRef,
-};
-use tokio::sync::oneshot::Receiver;
+use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
+use tokio::sync::oneshot::{self, Receiver};
 
-use crate::{
-    actor_task,
-    actors::{Actor, comment::ThreadComment},
-    app::Context,
-    utils::suspend_for_editor,
-};
-
-impl StatefulWidgetRef for Threads {
-    type State = Arc<Context>;
-
-    fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let Ok((_, comments)) = self.current_thread() else {
-            return;
-        };
-
-        if comments.is_empty() {
-            return;
-        }
-
-        const GAP: u16 = 1;
-
-        let mut y = 0;
-
-        for (idx, comment) in comments.iter().enumerate() {
-            if y >= area.height {
-                break;
-            }
-
-            let height = comment.layout_height(area.width);
-            let remaining_height = area.height.saturating_sub(y);
-            if remaining_height == 0 {
-                break;
-            }
-
-            let comment_area =
-                Rect::new(area.x, area.y + y, area.width, height.min(remaining_height));
-
-            comment.render_ref(comment_area, buf, state);
-            y = y.saturating_add(height);
-
-            if idx + 1 < comments.len() && y < area.height {
-                y = y.saturating_add(GAP.min(area.height.saturating_sub(y)));
-            }
-        }
-    }
-}
+use crate::{GH, utils::suspend_for_editor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadKey {
@@ -89,7 +43,7 @@ pub struct Threads {
     comment_queue: VecDeque<PendingComment>,
     current_thread: Option<ThreadKey>,
     current_comment: Option<usize>,
-    async_threads: Option<Receiver<BTreeMap<ThreadKey, Vec<ThreadComment>>>>,
+    recv_threads: Option<Receiver<BTreeMap<ThreadKey, Vec<ThreadComment>>>>,
 }
 
 #[allow(dead_code)]
@@ -97,6 +51,30 @@ pub struct Threads {
 pub struct PendingComment {
     pub in_reply_to: CommentId,
     pub content: String,
+}
+
+#[derive(Debug)]
+pub struct ThreadComment(pub Comment);
+
+impl Deref for ThreadComment {
+    type Target = Comment;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ThreadComment {
+    pub fn wrap_width(area_width: u16) -> usize {
+        // Stylize block consumes 2 columns; clamp to a sensible range.
+        let available = area_width.saturating_sub(2).max(1);
+        usize::from(available).min(80)
+    }
+
+    pub fn sanitised_body(&self) -> String {
+        // Fixes ghost characters left by tabs
+        self.body.replace("\t", "    ")
+    }
 }
 
 impl Threads {
@@ -186,10 +164,8 @@ impl Threads {
 
         Ok(())
     }
-}
 
-impl Actor for Threads {
-    fn tick(&mut self, event: &Event, _ctx: Arc<Context>) -> Result<bool> {
+    pub fn tick(&mut self, event: &Event) -> Result<bool> {
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right
@@ -237,22 +213,38 @@ impl Actor for Threads {
         Ok(false)
     }
 
-    fn init(&mut self, ctx: Arc<Context>) -> Result<()> {
-        actor_task!(self.async_threads => async move {
+    pub fn fetch(&mut self, pr: &PullRequest) -> Result<()> {
+        let Some(owner) = pr.user.as_ref().map(|o| o.login.clone()) else {
+            return Err(anyhow!("missing pr owner: {:?}", pr));
+        };
+
+        let Some(repo) = pr.repo.as_ref().map(|r| r.name.clone()) else {
+            return Err(anyhow!("missing pr repo: {:?}", pr));
+        };
+
+        let pr_number = pr.number;
+
+        let (tx, rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let Some(github) = GH.get() else {
+                unreachable!("github client not set")
+            };
+
             let mut page = Some(1u32);
             let mut threads: HashMap<CommentId, Vec<ThreadComment>> = HashMap::new();
 
             while let Some(page_number) = page {
-                let res = ctx
-                    .github
-                    .pulls()
-                    .list_comments(Some(ctx.github.pr.number))
+                let res = github
+                    .pulls(&owner, &repo)
+                    .list_comments(Some(pr_number))
                     .direction(Direction::Ascending)
                     .sort(Sort::Created)
                     .per_page(100)
                     .page(page_number)
                     .send()
-                    .await.unwrap();
+                    .await
+                    .unwrap();
 
                 for item in res.items {
                     threads
@@ -282,40 +274,21 @@ impl Actor for Threads {
                 result.insert(key, comments);
             }
 
-            result
+            let _ = tx.send(result);
         });
+
+        self.recv_threads = Some(rx);
+
         Ok(())
     }
 
-    fn poll_async(&mut self, _ctx: Arc<Context>) -> Result<()> {
-        actor_task!(self.async_threads, |threads| {
-            self.threads = threads;
-        });
-        Ok(())
-    }
-
-    fn dirty(&self) -> bool {
-        false
-    }
-
-    fn content_height(&self, area: Rect) -> u16 {
-        const GAP: u16 = 1;
-
-        let Ok((_, comments)) = self.current_thread() else {
-            return area.height;
-        };
-
-        if comments.is_empty() {
-            return area.height;
+    pub fn poll_async(&mut self) -> Result<()> {
+        if let Some(rx) = &mut self.recv_threads {
+            if let Some(Ok(value)) = rx.now_or_never() {
+                self.recv_threads = None;
+                self.threads = value;
+            }
         }
-
-        let gaps = (comments.len().saturating_sub(1) as u32) * u32::from(GAP);
-
-        comments
-            .iter()
-            .fold(gaps, |acc, comment| {
-                acc.saturating_add(u32::from(comment.layout_height(area.width)))
-            })
-            .min(u16::MAX as u32) as u16
+        Ok(())
     }
 }

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct Rgb(pub u8, pub u8, pub u8);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ColorScheme {
+pub struct ThemeState {
     pub pr_title: Rgb,
     pub muted: Rgb,
     pub author: Rgb,
@@ -15,6 +15,22 @@ pub struct ColorScheme {
     pub diff_added: Rgb,
     pub diff_removed: Rgb,
     pub diff_unchanged: Rgb,
+}
+
+impl Default for ThemeState {
+    fn default() -> Self {
+        Self {
+            pr_title: Rgb(208, 208, 208),
+            muted: Rgb(51, 53, 68),
+            author: Rgb(18, 207, 192),
+            comment_body: Rgb(208, 208, 208),
+            border: Rgb(51, 53, 68),
+            border_active: Rgb(18, 207, 192),
+            diff_added: Rgb(218, 255, 166),
+            diff_removed: Rgb(246, 144, 144),
+            diff_unchanged: Rgb(51, 53, 68),
+        }
+    }
 }
 
 impl From<Rgb> for Color {

@@ -2,10 +2,32 @@ use std::{env, fs, io::Write, process::Command};
 
 use anyhow::{Result, anyhow};
 use ratatui::{
+    buffer::{Buffer, Cell},
+    layout::Rect,
     style::Style,
     text::{Line, Span, Text},
 };
 use tempfile::NamedTempFile;
+
+pub fn blit_content(src: &Buffer, viewport: Rect, dest: &mut Buffer, scroll_offset: usize) {
+    let blank = Cell::default();
+    let src_height = src.area.height as usize;
+
+    for y in 0..viewport.height {
+        let dst_y = viewport.y + y;
+        let src_y = scroll_offset.saturating_add(y as usize);
+
+        for x in 0..viewport.width {
+            let dst_x = viewport.x + x;
+            let cell = if src_y < src_height {
+                src.cell((x, src_y as u16)).cloned().unwrap_or_default()
+            } else {
+                blank.clone()
+            };
+            dest[(dst_x, dst_y)] = cell;
+        }
+    }
+}
 
 pub fn wrap_markdown_body(
     body: &str,
