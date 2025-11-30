@@ -4,7 +4,7 @@ use std::{
     ops::Deref,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::FutureExt;
 use octocrab::{
@@ -214,7 +214,11 @@ impl Threads {
     }
 
     pub fn fetch(&mut self, pr: &PullRequest) -> Result<()> {
-        let Some(owner) = pr.user.as_ref().map(|o| o.login.clone()) else {
+        let Some(owner) = pr
+            .repo
+            .as_ref()
+            .and_then(|r| Some(r.owner.as_ref()?.login.clone()))
+        else {
             return Err(anyhow!("missing pr owner: {:?}", pr));
         };
 
@@ -244,6 +248,7 @@ impl Threads {
                     .page(page_number)
                     .send()
                     .await
+                    .context(format!("prs for {owner}/{repo}/{pr_number}"))
                     .unwrap();
 
                 for item in res.items {

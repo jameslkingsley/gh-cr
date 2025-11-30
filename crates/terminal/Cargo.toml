@@ -24,3 +24,6 @@ arc-swap = { version = "1.7.1", features = ["serde"] }
 futures-timer = "3.0.3"
 ratatui = { version = "0.29.0", features = ["unstable-widget-ref", "scrolling-regions"] }
 itertools = "0.14.0"
+throbber-widgets-tui = "0.9.0"
+tui-syntax-highlight = "0.1.2"
+syntect-assets = "0.23.6"

@@ -1,11 +1,10 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    text::Line,
-    widgets::{StatefulWidgetRef, Widget},
+    widgets::{StatefulWidget, StatefulWidgetRef},
 };
 
-use crate::states::AppState;
+use crate::{states::AppState, widgets::spinner::Spinner};
 
 #[derive(Debug)]
 pub struct LoadingView;
@@ -13,7 +12,7 @@ pub struct LoadingView;
 impl StatefulWidgetRef for LoadingView {
     type State = AppState;
 
-    fn render_ref(&self, area: Rect, buf: &mut Buffer, _state: &mut Self::State) {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let [_, main, _] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(2),
@@ -21,9 +20,9 @@ impl StatefulWidgetRef for LoadingView {
         ])
         .areas(area);
 
-        let [_, content] =
-            Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(main);
-
-        Line::raw("Loading...").render(content, buf);
+        Spinner::new()
+            .left_margin(2)
+            .label("Fetching pull request")
+            .render(main, buf, state);
     }
 }

@@ -22,6 +22,8 @@ pub async fn run_app<B: Backend>(
     init(&mut ctx)?;
 
     loop {
+        state.tick();
+
         poll_async_widgets(&mut ctx)?;
 
         terminal.draw(|frame| {
