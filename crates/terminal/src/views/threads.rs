@@ -25,7 +25,7 @@ impl StatefulWidgetRef for ThreadsView<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let [_, header_wide, _, main, _, footer_wide] = Layout::vertical([
             Constraint::Length(1), // Spacer
-            Constraint::Length(2), // Header
+            Constraint::Length(3), // Header
             Constraint::Length(1), // Spacer
             Constraint::Fill(1),   // Main
             Constraint::Length(1), // Spacer

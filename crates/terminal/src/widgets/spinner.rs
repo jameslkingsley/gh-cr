@@ -47,7 +47,7 @@ impl StatefulWidget for Spinner<'_> {
         };
 
         self.inner
-            .throbber_set(throbber_widgets_tui::OGHAM_C)
+            .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
             .throbber_style(Style::new().yellow())
             .style(Style::new().dark_gray())
             .render(main, buf, &mut state.throbber);

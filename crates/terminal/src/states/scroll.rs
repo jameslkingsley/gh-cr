@@ -1,3 +1,6 @@
+use anyhow::Result;
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
 #[derive(Debug, Default)]
 pub struct ScrollState {
     pub offset: usize,
@@ -56,5 +59,75 @@ impl ScrollState {
         if self.offset > max_scroll {
             self.offset = max_scroll;
         }
+    }
+
+    pub fn tick(&mut self, event: &Event) -> Result<bool> {
+        Ok(match event {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            })
+            | Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => true,
+            Event::Key(key) => {
+                match key {
+                    KeyEvent {
+                        code: KeyCode::Down,
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => {
+                        self.scroll_to_bottom();
+                    }
+                    KeyEvent {
+                        code: KeyCode::Up,
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => {
+                        self.scroll_to_top();
+                    }
+                    KeyEvent {
+                        code: KeyCode::Down,
+                        ..
+                    } => {
+                        self.scroll_down(1);
+                    }
+                    KeyEvent {
+                        code: KeyCode::Up, ..
+                    } => {
+                        self.scroll_up(1);
+                    }
+                    KeyEvent {
+                        code: KeyCode::PageDown,
+                        ..
+                    } => {
+                        self.scroll_page_down();
+                    }
+                    KeyEvent {
+                        code: KeyCode::PageUp,
+                        ..
+                    } => {
+                        self.scroll_page_up();
+                    }
+                    KeyEvent {
+                        code: KeyCode::Home,
+                        ..
+                    } => {
+                        self.scroll_to_top();
+                    }
+                    KeyEvent {
+                        code: KeyCode::End, ..
+                    } => {
+                        self.scroll_to_bottom();
+                    }
+                    _ => {}
+                }
+                false
+            }
+            _ => false,
+        })
     }
 }

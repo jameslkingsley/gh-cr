@@ -35,10 +35,9 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
         let mut meta: Vec<Span> = Vec::new();
 
         if let Some(author) = pr.user.as_ref() {
-            meta.push(Span::styled(
-                author.login.as_str(),
-                Style::default().light_cyan().italic(),
-            ));
+            meta.push(Span::styled("› ", Style::default().dark_gray()));
+
+            meta.push(Span::styled(author.login.as_str(), Style::default().gray()));
         }
 
         if let Some(updated_at) = pr.updated_at {
@@ -46,10 +45,7 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
                 meta.push(Span::styled(" · ", Style::default().dark_gray()));
             }
 
-            meta.push(Span::styled(
-                updated_at.humanize(),
-                Style::default().dark_gray(),
-            ));
+            meta.push(Span::styled(updated_at.humanize(), Style::default().gray()));
         }
 
         if let Some(count) = pr.changed_files {
@@ -62,11 +58,29 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
                 count,
                 if count == 1 { "" } else { "s" }
             );
-            meta.push(Span::styled(label, Style::default().dark_gray()));
+            meta.push(Span::styled(label, Style::default().gray()));
         }
 
         if !meta.is_empty() {
             lines.push(Line::from(meta));
+        }
+
+        if let Some(comment) = self
+            .ctx
+            .threads
+            .current_thread()
+            .ok()
+            .and_then(|(_, c)| c.first())
+        {
+            lines.push(Line::from_iter([
+                Span::styled("› ", Style::default().dark_gray()),
+                Span::from(format!(
+                    "{}:{}",
+                    comment.path,
+                    comment.line.unwrap_or(comment.original_line.unwrap_or(1)),
+                ))
+                .style(Style::default().gray()),
+            ]));
         }
 
         lines.push(Line::default());

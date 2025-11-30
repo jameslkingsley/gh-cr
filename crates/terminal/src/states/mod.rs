@@ -1,6 +1,8 @@
 mod scroll;
 mod theme;
 
+use anyhow::Result;
+use ratatui::crossterm::event::Event;
 use throbber_widgets_tui::ThrobberState;
 
 use crate::states::{scroll::ScrollState, theme::ThemeState};
@@ -34,7 +36,7 @@ impl Default for AppState {
 }
 
 impl AppState {
-    pub fn tick(&mut self) {
-        self.throbber.calc_next();
+    pub fn tick(&mut self, event: &Event) -> Result<bool> {
+        self.scroll.tick(event)
     }
 }
