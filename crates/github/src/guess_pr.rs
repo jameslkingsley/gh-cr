@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 
 use anyhow::{Result, anyhow};
+use futures::future::try_join;
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -11,10 +12,14 @@ pub struct GuessedPullRequest {
 }
 
 pub async fn guess_pull_request() -> Result<GuessedPullRequest> {
-    let repo: Value =
-        serde_json::from_str(&invoke_gh(["repo", "view", "--json", "name,owner"]).await?)?;
+    let (repo, pr) = try_join(
+        invoke_gh(["repo", "view", "--json", "name,owner"]),
+        invoke_gh(["pr", "view", "--json", "number"]),
+    )
+    .await?;
 
-    let pr: Value = serde_json::from_str(&invoke_gh(["pr", "view", "--json", "number"]).await?)?;
+    let repo: Value = serde_json::from_str(&repo)?;
+    let pr: Value = serde_json::from_str(&pr)?;
 
     Ok(GuessedPullRequest {
         pr: pr["number"]
