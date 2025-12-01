@@ -1,3 +1,4 @@
+pub mod tasks;
 pub mod threads;
 
 use anyhow::{Error, Result};
