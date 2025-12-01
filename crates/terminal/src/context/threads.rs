@@ -17,7 +17,7 @@ use octocrab::{
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use tokio::sync::oneshot::{self, Receiver};
 
-use crate::{GH, states::AppState, utils::suspend_for_editor};
+use crate::{GH, states::AppState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadKey {
@@ -72,7 +72,8 @@ impl ThreadComment {
     }
 
     pub fn sanitised_body(&self) -> String {
-        // Fixes ghost characters left by tabs
+        // Fixes ghost characters left by tabs.
+        // Probably more of a bug in Ratatui or Crossterm
         self.body.replace("\t", "    ")
     }
 }
@@ -165,7 +166,7 @@ impl Threads {
         Ok(())
     }
 
-    pub fn tick(&mut self, event: &Event, _state: &mut AppState) -> Result<bool> {
+    pub fn tick(&mut self, event: &Event, state: &mut AppState) -> Result<bool> {
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right
@@ -202,7 +203,8 @@ impl Threads {
         {
             let (thread_key, _) = self.current_thread()?;
             // TODO: Set initial contents to comment thread
-            let content = suspend_for_editor(String::new())?;
+            let content = state.suspend_for_editor(String::new())?;
+            // TODO: Submit work to queue that runs in separate thread
             self.queue_reply(PendingComment {
                 in_reply_to: thread_key.id,
                 content,

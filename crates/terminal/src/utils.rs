@@ -1,6 +1,5 @@
-use std::{cell::LazyCell, env, fs, io::Write, process::Command};
+use std::cell::LazyCell;
 
-use anyhow::{Result, anyhow};
 use ratatui::{
     buffer::{Buffer, Cell},
     layout::Rect,
@@ -8,7 +7,6 @@ use ratatui::{
     text::{Line, Span, Text},
 };
 use syntect_assets::assets::HighlightingAssets;
-use tempfile::NamedTempFile;
 use tui_syntax_highlight::{Highlighter, syntect::highlighting::Theme};
 
 pub fn highlight_diff_hunk<'a>(diff: &'a str, theme: Theme) -> Text<'a> {
@@ -132,21 +130,4 @@ pub fn stylize_block(text: &mut Text, style: Style) {
 
         line.spans.insert(0, Span::raw(block).style(style));
     }
-}
-
-pub fn suspend_for_editor(initial_contents: String) -> Result<String> {
-    let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
-
-    let mut tempfile = NamedTempFile::new()?;
-    tempfile.write_all(initial_contents.as_bytes())?;
-    tempfile.flush()?;
-
-    let status = Command::new(&editor).arg(tempfile.path()).status()?;
-    if !status.success() {
-        return Err(anyhow!("editor exited with {}", status));
-    }
-
-    let body = fs::read_to_string(tempfile.path())?;
-
-    Ok(body)
 }

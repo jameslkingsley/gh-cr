@@ -1,10 +1,25 @@
 mod scroll;
 mod theme;
 
-use std::time::Duration;
+use std::{
+    env, fs,
+    io::{Write, stdout},
+    process::Command,
+    time::Duration,
+};
 
-use anyhow::Result;
-use ratatui::crossterm::event::Event;
+use anyhow::{Result, anyhow};
+use ratatui::{
+    Terminal,
+    crossterm::{
+        cursor::{Hide, Show},
+        event::Event,
+        execute,
+        terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    },
+    prelude::Backend,
+};
+use tempfile::NamedTempFile;
 use throbber_widgets_tui::ThrobberState;
 
 use crate::states::{scroll::ScrollState, theme::ThemeState};
@@ -24,7 +39,7 @@ pub struct AppState {
     pub throbber: ThrobberState,
     pub show_diffs: bool,
     pub render_time: Duration,
-    pub suspend: Option<()>, // TODO ptr to function that is called during suspension
+    pub force_render: bool,
 }
 
 impl Default for AppState {
@@ -36,13 +51,61 @@ impl Default for AppState {
             throbber: Default::default(),
             show_diffs: true,
             render_time: Duration::ZERO,
-            suspend: None,
+            force_render: false,
         }
     }
 }
 
 impl AppState {
+    /// Force clear the terminal and redraw on the next frame if the state's
+    /// `force_render` is set.
+    pub fn maybe_force_redraw<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        if self.force_render {
+            self.force_render = false;
+            terminal.clear()?;
+        }
+        Ok(())
+    }
+
     pub fn tick(&mut self, event: &Event) -> Result<bool> {
         self.scroll.tick(event)
+    }
+
+    pub fn suspend_for_editor(&mut self, initial_contents: String) -> Result<String> {
+        Self::leave()?;
+
+        // Mark the app state as needing a force render, which will be picked up
+        // in the next main loop
+        self.force_render = true;
+
+        let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+
+        let mut tempfile = NamedTempFile::new()?;
+        tempfile.write_all(initial_contents.as_bytes())?;
+        tempfile.flush()?;
+
+        let status = Command::new(&editor).arg(tempfile.path()).status()?;
+        if !status.success() {
+            Self::enter()?;
+            return Err(anyhow!("editor exited with {}", status));
+        }
+
+        let body = fs::read_to_string(tempfile.path())?;
+
+        Self::enter()?;
+
+        Ok(body)
+    }
+
+    fn leave() -> Result<()> {
+        disable_raw_mode()?;
+        execute!(stdout(), LeaveAlternateScreen, Show)?;
+        Ok(())
+    }
+
+    fn enter() -> Result<()> {
+        enable_raw_mode()?;
+        execute!(stdout(), EnterAlternateScreen, Hide)?;
+        Ok(())
     }
 }

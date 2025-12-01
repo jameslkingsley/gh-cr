@@ -22,6 +22,8 @@ pub async fn run_app<B: Backend>(
     ctx.init()?;
 
     loop {
+        state.maybe_force_redraw(terminal)?;
+
         state.throbber.calc_next();
 
         ctx.poll_async()?;
