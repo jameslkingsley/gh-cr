@@ -1,8 +1,9 @@
 use chrono_humanize::Humanize;
+use colorhash::ColorHash;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Style, Stylize},
+    style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Paragraph, StatefulWidgetRef, Widget},
 };
@@ -34,8 +35,15 @@ impl ThreadComment {
 
         let mut lines: Vec<Line> = Vec::new();
 
+        let author_color = ColorHash::new().rgb(&author);
+        let author_color = Color::Rgb(
+            author_color.red().floor() as u8,
+            author_color.green().floor() as u8,
+            author_color.blue().floor() as u8,
+        );
+
         lines.push(Line::from_iter([
-            Span::styled(author, Style::default().cyan()),
+            Span::styled(author, Style::default().fg(author_color).bold()),
             Span::raw(" "),
             Span::styled(created_at, Style::default().dim()),
         ]));

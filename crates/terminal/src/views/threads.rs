@@ -22,6 +22,11 @@ impl StatefulWidgetRef for ThreadsView<'_> {
     type State = AppState;
 
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        // TODO:
+        // - Maybe use layout to simplify toggling of diff instead of manually
+        //   calculating everything. Just need a way to scroll the layout areas
+        // - Show thread resolved status
+
         let [_, header_wide, _, main, _, footer_wide] = Layout::vertical([
             Constraint::Length(1), // Spacer
             Constraint::Length(3), // Header

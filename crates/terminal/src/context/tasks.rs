@@ -163,6 +163,10 @@ async fn fetch_comment_threads(
     let mut page = Some(1u32);
     let mut threads: HashMap<CommentId, Vec<ThreadComment>> = HashMap::new();
 
+    // TODO:
+    // - Manual GraphQL to get all comments, their resolved status (if review), and any review bodies
+    // - Abstraction for threads, so octocrab is only in github crate, allow for other services to be added
+
     while let Some(page_number) = page {
         let res = github
             .pulls(owner, repo)
@@ -207,4 +211,95 @@ async fn fetch_comment_threads(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use github::GitHub;
+    use serde_json::{Value, json};
+    use testresult::TestResult;
+
+    #[tokio::test]
+    async fn test_github_graphql() -> TestResult {
+        let gh = GitHub::new();
+
+        let res: Value = gh
+            .graphql(&json!({
+                "query": format!(r#"
+                query {{
+                    repository(owner: "jameslkingsley", name: "gh-cr") {{
+                        name
+                        owner {{
+                            login
+                        }}
+                        pullRequest(number: 2) {{
+                            number
+                            author {{
+                                login
+                            }}
+                            comments(first: 100) {{
+                                nodes {{
+                                    author {{
+                                        login
+                                    }}
+                                    body
+                                    createdAt
+                                    fullDatabaseId
+                                    id
+                                }}
+                                pageInfo {{
+                                    endCursor
+                                    startCursor
+                                    hasNextPage
+                                    hasPreviousPage
+                                }}
+                            }}
+                            reviewThreads(first: 100) {{
+                                nodes {{
+                                    id
+                                    isResolved
+                                    path
+                                    comments(first: 100) {{
+                                        nodes {{
+                                            author {{
+                                                login
+                                            }}
+                                            body
+                                            createdAt
+                                            diffHunk
+                                            fullDatabaseId
+                                            id
+                                            line
+                                            originalLine
+                                            originalStartLine
+                                            outdated
+                                            path
+                                            repository {{
+                                                name
+                                                owner {{
+                                                    login
+                                                }}
+                                            }}
+                                            startLine
+                                            subjectType
+                                        }}
+                                    }}
+                                }}
+                                pageInfo {{
+                                    endCursor
+                                    startCursor
+                                    hasNextPage
+                                    hasPreviousPage
+                                }}
+                            }}
+                        }}
+                    }}
+                }}"#)
+            }))
+            .await?;
+
+        dbg!(res);
+
+        Ok(())
+    }
 }

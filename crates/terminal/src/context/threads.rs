@@ -61,7 +61,14 @@ impl ThreadComment {
     pub fn sanitised_body(&self) -> String {
         // Fixes ghost characters left by tabs.
         // Probably more of a bug in Ratatui or Crossterm
-        self.body.replace("\t", "    ")
+        let without_tabs = self.body.replace("\t", "    ");
+
+        // Omit emoji skin-tone modifiers as they seem to become ghost
+        // characters too..
+        without_tabs
+            .chars()
+            .filter(|&c| !(('\u{1F3FB}'..='\u{1F3FF}').contains(&c)))
+            .collect()
     }
 }
 

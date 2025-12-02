@@ -19,6 +19,8 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
     type State = AppState;
 
     fn render_ref(&self, area: Rect, buf: &mut Buffer, _state: &mut Self::State) {
+        // TODO:
+        // - Show pull request status (draft, merged, closed, approved, etc.)
         let Some(pr) = self.ctx.pr.as_ref() else {
             return;
         };
