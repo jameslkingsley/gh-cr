@@ -22,7 +22,10 @@ use ratatui::{
 use tempfile::NamedTempFile;
 use throbber_widgets_tui::ThrobberState;
 
-use crate::states::{scroll::ScrollState, theme::ThemeState};
+use crate::{
+    states::{scroll::ScrollState, theme::ThemeState},
+    utils::dirty,
+};
 
 #[derive(Debug, Default, Copy, Clone)]
 pub enum View {
@@ -37,8 +40,8 @@ pub struct AppState {
     pub theme: ThemeState,
     pub view: View,
     pub throbber: ThrobberState,
-    pub show_diffs: bool,
     pub render_time: Duration,
+    pub show_diffs: bool,
     pub force_render: bool,
 }
 
@@ -49,8 +52,8 @@ impl Default for AppState {
             theme: Default::default(),
             view: Default::default(),
             throbber: Default::default(),
-            show_diffs: true,
             render_time: Duration::ZERO,
+            show_diffs: true,
             force_render: false,
         }
     }
@@ -63,6 +66,7 @@ impl AppState {
         if self.force_render {
             self.force_render = false;
             terminal.clear()?;
+            dirty();
         }
         Ok(())
     }
@@ -77,6 +81,7 @@ impl AppState {
         // Mark the app state as needing a force render, which will be picked up
         // in the next main loop
         self.force_render = true;
+        dirty();
 
         let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".into());
 

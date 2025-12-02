@@ -1,6 +1,8 @@
 use anyhow::Result;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
+use crate::utils::dirty;
+
 #[derive(Debug, Default)]
 pub struct ScrollState {
     pub offset: usize,
@@ -18,6 +20,7 @@ impl ScrollState {
         let new_offset = (self.offset + lines).min(max_scroll);
         if new_offset != self.offset {
             self.offset = new_offset;
+            dirty();
         }
     }
 
@@ -25,6 +28,7 @@ impl ScrollState {
         let new_offset = self.offset.saturating_sub(lines);
         if new_offset != self.offset {
             self.offset = new_offset;
+            dirty();
         }
     }
 
@@ -41,6 +45,7 @@ impl ScrollState {
     pub fn scroll_to_top(&mut self) {
         if self.offset != 0 {
             self.offset = 0;
+            dirty();
         }
     }
 
@@ -48,6 +53,7 @@ impl ScrollState {
         let max_scroll = self.max_scroll();
         if self.offset != max_scroll {
             self.offset = max_scroll;
+            dirty();
         }
     }
 
@@ -58,6 +64,7 @@ impl ScrollState {
         let max_scroll = self.max_scroll();
         if self.offset > max_scroll {
             self.offset = max_scroll;
+            dirty();
         }
     }
 

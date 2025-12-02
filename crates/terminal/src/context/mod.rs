@@ -1,14 +1,22 @@
 pub mod tasks;
 pub mod threads;
 
-use anyhow::{Error, Result};
+use anyhow::{Error, Result, anyhow};
 use futures::{FutureExt, future::try_join};
 use github::guess_pr::guess_pull_request;
 use octocrab::models::{Repository, pulls::PullRequest};
 use ratatui::crossterm::event::Event;
 use tokio::sync::oneshot::{self, Receiver};
 
-use crate::{Cli, GH, context::threads::Threads, states::AppState};
+use crate::{
+    Cli, GH,
+    context::{
+        tasks::{Signal, Status, Task, Tasks, Worker},
+        threads::Threads,
+    },
+    states::AppState,
+    utils::dirty,
+};
 
 #[derive(Debug)]
 pub struct Context {
@@ -16,6 +24,8 @@ pub struct Context {
     pub repo: Option<Repository>,
     pub pr: Option<PullRequest>,
     pub threads: Threads,
+    tasks: Tasks,
+    task_status: Status,
     recv: Option<Receiver<(Repository, PullRequest)>>,
 }
 
@@ -26,8 +36,14 @@ impl Context {
             repo: None,
             pr: None,
             threads: Threads::default(),
+            tasks: Worker::spawn(),
+            task_status: Status::Idle,
             recv: None,
         }
+    }
+
+    pub fn is_working(&self) -> bool {
+        self.task_status == Status::Working
     }
 
     pub fn is_loading(&self) -> bool {
@@ -76,7 +92,10 @@ impl Context {
     }
 
     pub fn tick(&mut self, event: &Event, state: &mut AppState) -> Result<bool> {
-        if self.threads.tick(event, state)? {
+        if self
+            .threads
+            .tick(event, state, &self.tasks, self.pr.as_ref())?
+        {
             return Ok(true);
         }
         Ok(false)
@@ -86,14 +105,49 @@ impl Context {
         if let Some(rx) = &mut self.recv {
             if let Some(Ok((repo, pr))) = rx.now_or_never() {
                 // Repo or pull request has changed, so fetch threads
-                self.threads.fetch(&pr)?;
+                self.enqueue_thread_fetch(&pr)?;
                 self.recv = None;
                 self.repo = Some(repo);
                 self.pr = Some(pr);
+                dirty();
             }
         }
 
-        self.threads.poll_async()?;
+        while let Ok(signal) = self.tasks.signals().try_recv() {
+            match signal {
+                Signal::CommentThreads { map } => self.threads.replace_threads(map),
+            }
+        }
+
+        {
+            let status = self.tasks.status();
+            if let Ok(true) = status.has_changed() {
+                self.task_status = *status.borrow_and_update();
+                dirty();
+            }
+        }
+
+        Ok(())
+    }
+
+    fn enqueue_thread_fetch(&mut self, pr: &PullRequest) -> Result<()> {
+        let Some(owner) = pr
+            .repo
+            .as_ref()
+            .and_then(|r| Some(r.owner.as_ref()?.login.clone()))
+        else {
+            return Err(anyhow!("missing pr owner: {:?}", pr));
+        };
+
+        let Some(repo) = pr.repo.as_ref().map(|r| r.name.clone()) else {
+            return Err(anyhow!("missing pr repo: {:?}", pr));
+        };
+
+        self.tasks.send(Task::FetchCommentThreads {
+            owner,
+            repo,
+            pr_number: pr.number,
+        })?;
 
         Ok(())
     }

@@ -1,4 +1,7 @@
-use std::cell::LazyCell;
+use std::{
+    cell::LazyCell,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use ratatui::{
     buffer::{Buffer, Cell},
@@ -8,6 +11,20 @@ use ratatui::{
 };
 use syntect_assets::assets::HighlightingAssets;
 use tui_syntax_highlight::{Highlighter, syntect::highlighting::Theme};
+
+pub static DIRTY: AtomicBool = AtomicBool::new(true);
+
+pub fn is_dirty() -> bool {
+    DIRTY.load(Ordering::Relaxed)
+}
+
+pub fn dirty() {
+    DIRTY.store(true, Ordering::Relaxed);
+}
+
+pub fn clean() {
+    DIRTY.store(false, Ordering::Relaxed);
+}
 
 pub fn highlight_diff_hunk<'a>(diff: &'a str, theme: Theme) -> Text<'a> {
     let diff = textwrap::dedent(diff)

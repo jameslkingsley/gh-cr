@@ -11,6 +11,7 @@ use tokio::task::yield_now;
 use crate::{
     context::Context,
     states::{AppState, View},
+    utils::{clean, is_dirty},
     views::{loading::LoadingView, threads::ThreadsView},
 };
 
@@ -28,24 +29,28 @@ pub async fn run_app<B: Backend>(
 
         ctx.poll_async()?;
 
-        terminal.draw(|frame| {
-            let render_time = Instant::now();
+        if is_dirty() || ctx.is_loading() || ctx.is_working() {
+            terminal.draw(|frame| {
+                if ctx.is_loading() {
+                    frame.render_stateful_widget_ref(LoadingView, frame.area(), &mut state);
+                    return;
+                }
 
-            if ctx.is_loading() {
-                frame.render_stateful_widget_ref(LoadingView, frame.area(), &mut state);
-                return;
-            }
+                let render_time = Instant::now();
 
-            match state.view {
-                View::Threads => frame.render_stateful_widget_ref(
-                    ThreadsView { ctx: &ctx },
-                    frame.area(),
-                    &mut state,
-                ),
-            }
+                match state.view {
+                    View::Threads => frame.render_stateful_widget_ref(
+                        ThreadsView { ctx: &ctx },
+                        frame.area(),
+                        &mut state,
+                    ),
+                }
 
-            state.render_time = render_time.elapsed();
-        })?;
+                state.render_time = render_time.elapsed();
+            })?;
+
+            clean();
+        }
 
         if poll(Duration::from_millis(100))? {
             let event = read()?;

@@ -1,28 +1,24 @@
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, HashMap, VecDeque},
-    ops::Deref,
-};
+use std::{cmp::Ordering, collections::BTreeMap, ops::Deref};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
-use futures::FutureExt;
-use octocrab::{
-    models::{
-        CommentId,
-        pulls::{Comment, PullRequest},
-    },
-    params::{Direction, pulls::comments::Sort},
+use github::PullRequestExt;
+use octocrab::models::{
+    CommentId,
+    pulls::{Comment, PullRequest},
 };
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
-use tokio::sync::oneshot::{self, Receiver};
 
-use crate::{GH, states::AppState};
+use crate::{
+    context::tasks::{Task, Tasks},
+    states::AppState,
+    utils::dirty,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadKey {
-    id: CommentId,
-    ts: DateTime<Utc>,
+    pub id: CommentId,
+    pub ts: DateTime<Utc>,
 }
 
 impl Ord for ThreadKey {
@@ -40,17 +36,8 @@ impl PartialOrd for ThreadKey {
 #[derive(Debug, Default)]
 pub struct Threads {
     threads: BTreeMap<ThreadKey, Vec<ThreadComment>>,
-    comment_queue: VecDeque<PendingComment>,
     current_thread: Option<ThreadKey>,
     current_comment: Option<usize>,
-    recv_threads: Option<Receiver<BTreeMap<ThreadKey, Vec<ThreadComment>>>>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct PendingComment {
-    pub in_reply_to: CommentId,
-    pub content: String,
 }
 
 #[derive(Debug)]
@@ -79,9 +66,16 @@ impl ThreadComment {
 }
 
 impl Threads {
-    pub fn queue_reply(&mut self, comment: PendingComment) -> Result<()> {
-        self.comment_queue.push_back(comment);
-        Ok(())
+    pub fn replace_threads(&mut self, threads: BTreeMap<ThreadKey, Vec<ThreadComment>>) {
+        if let Some(key) = self.current_thread.as_ref() {
+            if !threads.contains_key(key) {
+                self.current_thread = threads.first_key_value().map(|(k, _)| *k);
+            }
+        }
+
+        self.threads = threads;
+        self.current_comment = None;
+        dirty();
     }
 
     pub fn current_thread_index(&self) -> Result<usize> {
@@ -119,6 +113,7 @@ impl Threads {
         };
 
         self.current_comment = None;
+        dirty();
 
         Ok(())
     }
@@ -140,6 +135,7 @@ impl Threads {
         };
 
         self.current_comment = None;
+        dirty();
 
         Ok(())
     }
@@ -151,6 +147,7 @@ impl Threads {
             Some(i) => (i + 1) % comments.len(),
             None => 0,
         });
+        dirty();
 
         Ok(())
     }
@@ -162,11 +159,26 @@ impl Threads {
             Some(i) => (i + comments.len() - 1) % comments.len(),
             None => comments.len() - 1,
         });
+        dirty();
 
         Ok(())
     }
 
-    pub fn tick(&mut self, event: &Event, state: &mut AppState) -> Result<bool> {
+    pub fn tick(
+        &mut self,
+        event: &Event,
+        state: &mut AppState,
+        tasks: &Tasks,
+        pr: Option<&PullRequest>,
+    ) -> Result<bool> {
+        // Toggle diffs
+        if let Event::Key(key) = event
+            && key.code == KeyCode::Char('d')
+        {
+            state.show_diffs = !state.show_diffs;
+            dirty();
+        }
+
         // Next thread
         if let Event::Key(key) = event
             && key.code == KeyCode::Right
@@ -202,99 +214,20 @@ impl Threads {
             && key.code == KeyCode::Char('r')
         {
             let (thread_key, _) = self.current_thread()?;
+            let Some(pr) = pr else {
+                return Err(anyhow!("pr is none"));
+            };
             // TODO: Set initial contents to comment thread
             let content = state.suspend_for_editor(String::new())?;
-            // TODO: Submit work to queue that runs in separate thread
-            self.queue_reply(PendingComment {
-                in_reply_to: thread_key.id,
-                content,
+            tasks.send(Task::PostReviewComment {
+                owner: pr.owner().to_owned(),
+                repo: pr.repo().to_owned(),
+                pr_number: pr.number(),
+                comment_id: thread_key.id,
+                body: content,
             })?;
         }
 
         Ok(false)
-    }
-
-    pub fn fetch(&mut self, pr: &PullRequest) -> Result<()> {
-        let Some(owner) = pr
-            .repo
-            .as_ref()
-            .and_then(|r| Some(r.owner.as_ref()?.login.clone()))
-        else {
-            return Err(anyhow!("missing pr owner: {:?}", pr));
-        };
-
-        let Some(repo) = pr.repo.as_ref().map(|r| r.name.clone()) else {
-            return Err(anyhow!("missing pr repo: {:?}", pr));
-        };
-
-        let pr_number = pr.number;
-
-        let (tx, rx) = oneshot::channel();
-
-        tokio::spawn(async move {
-            let Some(github) = GH.get() else {
-                unreachable!("github client not set")
-            };
-
-            let mut page = Some(1u32);
-            let mut threads: HashMap<CommentId, Vec<ThreadComment>> = HashMap::new();
-
-            while let Some(page_number) = page {
-                let res = github
-                    .pulls(&owner, &repo)
-                    .list_comments(Some(pr_number))
-                    .direction(Direction::Ascending)
-                    .sort(Sort::Created)
-                    .per_page(100)
-                    .page(page_number)
-                    .send()
-                    .await
-                    .context(format!("prs for {owner}/{repo}/{pr_number}"))
-                    .unwrap();
-
-                for item in res.items {
-                    threads
-                        .entry(item.in_reply_to_id.unwrap_or(item.id))
-                        .or_default()
-                        .push(ThreadComment(item));
-                }
-
-                if res.incomplete_results.is_some_and(|v| v) {
-                    page.replace(page_number + 1);
-                } else {
-                    page = None;
-                }
-            }
-
-            let mut result: BTreeMap<ThreadKey, Vec<ThreadComment>> = Default::default();
-
-            for (thread_id, mut comments) in threads {
-                assert!(!comments.is_empty());
-                comments.sort_unstable_by_key(|c| c.created_at);
-
-                let key = ThreadKey {
-                    id: thread_id,
-                    ts: comments[0].created_at,
-                };
-
-                result.insert(key, comments);
-            }
-
-            let _ = tx.send(result);
-        });
-
-        self.recv_threads = Some(rx);
-
-        Ok(())
-    }
-
-    pub fn poll_async(&mut self) -> Result<()> {
-        if let Some(rx) = &mut self.recv_threads {
-            if let Some(Ok(value)) = rx.now_or_never() {
-                self.recv_threads = None;
-                self.threads = value;
-            }
-        }
-        Ok(())
     }
 }

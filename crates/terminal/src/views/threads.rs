@@ -1,11 +1,8 @@
 use std::u16;
 
-#[cfg(debug_assertions)]
-use ratatui::style::Stylize;
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
-    text::{Line, Span},
+    layout::{Constraint, Flex, Layout, Rect},
     widgets::{StatefulWidget, StatefulWidgetRef, Widget},
 };
 
@@ -38,8 +35,16 @@ impl StatefulWidgetRef for ThreadsView<'_> {
         let [_, header] =
             Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(header_wide);
 
-        let [_, footer] =
-            Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(footer_wide);
+        let [_, footer_full, _] = Layout::horizontal([
+            Constraint::Length(2),
+            Constraint::Length(82),
+            Constraint::Fill(1),
+        ])
+        .areas(footer_wide);
+
+        let [footer_left] = Layout::horizontal([Constraint::Fill(1)])
+            .flex(Flex::Start)
+            .areas(footer_full);
 
         let [content_viewport, _, _side] = Layout::horizontal([
             Constraint::Length(82),
@@ -62,12 +67,15 @@ impl StatefulWidgetRef for ThreadsView<'_> {
         let pr_header = PullRequestHeader { ctx: self.ctx };
         pr_header.render_ref(header, buf, state);
 
-        Line::from_iter([
-            Span::raw("Footer line"),
-            #[cfg(debug_assertions)]
-            Span::from(format!(" | Render time: {:?}", state.render_time)).light_green(),
-        ])
-        .render(footer, buf);
+        if self.ctx.is_working() {
+            Spinner::new()
+                .label("Working")
+                .render(footer_left, buf, state);
+        }
+
+        // Span::from(format!("{:?}", state.render_time))
+        // .dark_gray()
+        // .render(footer_left, buf);
 
         let virtual_height = content_height.max(1);
         let mut content_buf =

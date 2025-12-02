@@ -35,7 +35,7 @@ impl ThreadComment {
         let mut lines: Vec<Line> = Vec::new();
 
         lines.push(Line::from_iter([
-            Span::styled(author, Style::default().cyan().bold()),
+            Span::styled(author, Style::default().cyan()),
             Span::raw(" "),
             Span::styled(created_at, Style::default().dim()),
         ]));
