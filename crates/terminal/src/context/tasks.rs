@@ -215,88 +215,118 @@ async fn fetch_comment_threads(
 
 #[cfg(test)]
 mod tests {
+    #![allow(dead_code)]
+
+    use chrono::{DateTime, Utc};
     use github::GitHub;
+    use serde::Deserialize;
     use serde_json::{Value, json};
     use testresult::TestResult;
+
+    #[derive(Debug, Deserialize)]
+    struct ResponseDataWrapper<T> {
+        data: T,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct PullRequestData {
+        repository: Repository,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Repository {
+        name: String,
+        owner: Actor,
+        pull_request: PullRequest,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Actor {
+        login: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PullRequest {
+        number: u64,
+        author: Actor,
+        comments: CommentConnection<IssueComment>,
+        review_threads: ReviewThreadConnection,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CommentConnection<T> {
+        nodes: Vec<T>,
+        page_info: Option<PageInfo>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PageInfo {
+        end_cursor: Option<String>,
+        has_next_page: bool,
+        has_previous_page: bool,
+        start_cursor: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct IssueComment {
+        author: Actor,
+        body: String,
+        created_at: DateTime<Utc>,
+        full_database_id: Option<String>,
+        id: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReviewThreadConnection {
+        nodes: Vec<ReviewThread>,
+        page_info: Option<PageInfo>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReviewThread {
+        id: String,
+        is_resolved: bool,
+        path: String,
+        comments: CommentConnection<ReviewComment>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReviewComment {
+        author: Actor,
+        body: String,
+        created_at: DateTime<Utc>,
+        diff_hunk: String,
+        full_database_id: Option<String>,
+        id: String,
+        line: Option<i64>,
+        original_line: Option<i64>,
+        original_start_line: Option<i64>,
+        outdated: bool,
+        path: String,
+        repository: CommentRepository,
+        start_line: Option<i64>,
+        subject_type: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CommentRepository {
+        name: String,
+        owner: Actor,
+    }
 
     #[tokio::test]
     async fn test_github_graphql() -> TestResult {
         let gh = GitHub::new();
 
-        let res: Value = gh
-            .graphql(&json!({
-                "query": format!(r#"
-                query {{
-                    repository(owner: "jameslkingsley", name: "gh-cr") {{
-                        name
-                        owner {{
-                            login
-                        }}
-                        pullRequest(number: 2) {{
-                            number
-                            author {{
-                                login
-                            }}
-                            comments(first: 100) {{
-                                nodes {{
-                                    author {{
-                                        login
-                                    }}
-                                    body
-                                    createdAt
-                                    fullDatabaseId
-                                    id
-                                }}
-                                pageInfo {{
-                                    endCursor
-                                    startCursor
-                                    hasNextPage
-                                    hasPreviousPage
-                                }}
-                            }}
-                            reviewThreads(first: 100) {{
-                                nodes {{
-                                    id
-                                    isResolved
-                                    path
-                                    comments(first: 100) {{
-                                        nodes {{
-                                            author {{
-                                                login
-                                            }}
-                                            body
-                                            createdAt
-                                            diffHunk
-                                            fullDatabaseId
-                                            id
-                                            line
-                                            originalLine
-                                            originalStartLine
-                                            outdated
-                                            path
-                                            repository {{
-                                                name
-                                                owner {{
-                                                    login
-                                                }}
-                                            }}
-                                            startLine
-                                            subjectType
-                                        }}
-                                    }}
-                                }}
-                                pageInfo {{
-                                    endCursor
-                                    startCursor
-                                    hasNextPage
-                                    hasPreviousPage
-                                }}
-                            }}
-                        }}
-                    }}
-                }}"#)
-            }))
-            .await?;
+        let res = gh.fetch_threads("jameslkingsley", "gh-cr", 2).await?;
 
         dbg!(res);
 
