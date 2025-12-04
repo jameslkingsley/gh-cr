@@ -17,7 +17,7 @@ pub struct Threads {
 
 impl Threads {
     pub fn replace_threads(&mut self, data: PullRequestThreadsResponse) {
-        if !data
+        if data
             .pull_request
             .review_threads
             .nodes

@@ -13,7 +13,7 @@ use ratatui::{
     Terminal,
     crossterm::{
         cursor::{Hide, Show},
-        event::Event,
+        event::{Event, KeyCode, KeyEvent, KeyModifiers},
         execute,
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     },
@@ -72,6 +72,21 @@ impl AppState {
     }
 
     pub fn tick(&mut self, event: &Event) -> Result<bool> {
+        match event {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            })
+            | Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => return Ok(true),
+            Event::Resize(_, _) => dirty(),
+            _ => {}
+        }
+
         self.scroll.tick(event)
     }
 
