@@ -10,7 +10,11 @@ use crate::{
     context::Context,
     states::AppState,
     utils::{blit_content, highlight_diff_hunk},
-    widgets::{pr_header::PullRequestHeader, spinner::Spinner},
+    widgets::{
+        comment::{CommentWidget, comment_layout_height},
+        pr_header::PullRequestHeader,
+        spinner::Spinner,
+    },
 };
 
 #[derive(Debug)]
@@ -116,27 +120,29 @@ impl StatefulWidgetRef for ThreadsView<'_> {
 
 impl ThreadsView<'_> {
     fn diff_height(&self) -> u16 {
-        let Ok((_, comments)) = self.ctx.threads.current_thread() else {
+        let Some(thread) = self.ctx.threads.current_thread() else {
             return 0;
         };
 
-        if comments.is_empty() {
+        if thread.comments.nodes.is_empty() {
             return 0;
         }
 
-        let diff = comments[0].diff_hunk.lines().count();
+        let diff = thread.comments.nodes[0].diff_hunk.lines().count();
 
         u16::try_from(diff).unwrap_or(u16::MAX)
     }
 
     fn render_diff(&self, area: Rect, buf: &mut Buffer, state: &mut AppState) {
-        let Ok((_, comments)) = self.ctx.threads.current_thread() else {
+        let Some(thread) = self.ctx.threads.current_thread() else {
             Spinner::new()
                 .left_margin(2)
                 .label("Fetching comments")
                 .render(area, buf, state);
             return;
         };
+
+        let comments = &thread.comments.nodes;
 
         if comments.is_empty() {
             return;
@@ -148,13 +154,15 @@ impl ThreadsView<'_> {
     }
 
     fn render_comments(&self, area: Rect, buf: &mut Buffer, state: &mut AppState) {
-        let Ok((_, comments)) = self.ctx.threads.current_thread() else {
+        let Some(thread) = self.ctx.threads.current_thread() else {
             Spinner::new()
                 .left_margin(2)
                 .label("Fetching comments")
                 .render(area, buf, state);
             return;
         };
+
+        let comments = &thread.comments.nodes;
 
         if comments.is_empty() {
             return;
@@ -169,7 +177,7 @@ impl ThreadsView<'_> {
                 break;
             }
 
-            let height = comment.layout_height(area.width);
+            let height = comment_layout_height(comment, area.width);
             let remaining_height = area.height.saturating_sub(y);
             if remaining_height == 0 {
                 break;
@@ -178,7 +186,7 @@ impl ThreadsView<'_> {
             let comment_area =
                 Rect::new(area.x, area.y + y, area.width, height.min(remaining_height));
 
-            comment.render_ref(comment_area, buf, state);
+            CommentWidget::ReviewComment(comment).render_ref(comment_area, buf, state);
             y = y.saturating_add(height);
 
             if idx + 1 < comments.len() && y < area.height {
@@ -190,9 +198,11 @@ impl ThreadsView<'_> {
     fn content_height(&self, area: Rect, diff_height: u16) -> u16 {
         const GAP: usize = 1;
 
-        let Ok((_, comments)) = self.ctx.threads.current_thread() else {
+        let Some(thread) = self.ctx.threads.current_thread() else {
             return area.height;
         };
+
+        let comments = &thread.comments.nodes;
 
         if comments.is_empty() {
             return area.height;
@@ -203,7 +213,7 @@ impl ThreadsView<'_> {
         comments
             .iter()
             .fold(gaps as u16, |acc, comment| {
-                acc.saturating_add(comment.layout_height(area.width))
+                acc.saturating_add(comment_layout_height(comment, area.width))
             })
             .min(u16::MAX)
             + diff_height

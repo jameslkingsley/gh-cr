@@ -3,7 +3,6 @@ pub mod threads;
 
 use anyhow::{Error, Result, anyhow};
 use futures::{FutureExt, future::try_join};
-use github::guess_pr::guess_pull_request;
 use octocrab::models::{Repository, pulls::PullRequest};
 use ratatui::crossterm::event::Event;
 use tokio::sync::oneshot::{self, Receiver};
@@ -14,6 +13,7 @@ use crate::{
         tasks::{Signal, Status, Task, Tasks, Worker},
         threads::Threads,
     },
+    github::guess_pr::guess_pull_request,
     states::AppState,
     utils::dirty,
 };
@@ -92,10 +92,7 @@ impl Context {
     }
 
     pub fn tick(&mut self, event: &Event, state: &mut AppState) -> Result<bool> {
-        if self
-            .threads
-            .tick(event, state, &self.tasks, self.pr.as_ref())?
-        {
+        if self.threads.tick(event, state, &self.tasks)? {
             return Ok(true);
         }
         Ok(false)
@@ -115,7 +112,7 @@ impl Context {
 
         while let Ok(signal) = self.tasks.signals().try_recv() {
             match signal {
-                Signal::CommentThreads { map } => self.threads.replace_threads(map),
+                Signal::CommentThreads { data } => self.threads.replace_threads(data),
             }
         }
 

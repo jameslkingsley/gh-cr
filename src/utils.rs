@@ -92,6 +92,19 @@ pub fn blit_content(src: &Buffer, viewport: Rect, dest: &mut Buffer, scroll_offs
     }
 }
 
+pub fn sanitised_markdown(md: &str) -> String {
+    // Fixes ghost characters left by tabs.
+    // Probably more of a bug in Ratatui or Crossterm
+    let without_tabs = md.replace("\t", "    ");
+
+    // Omit emoji skin-tone modifiers as they seem to become ghost
+    // characters too..
+    without_tabs
+        .chars()
+        .filter(|&c| !(('\u{1F3FB}'..='\u{1F3FF}').contains(&c)))
+        .collect()
+}
+
 pub fn wrap_markdown_body(
     body: &str,
     width: usize,

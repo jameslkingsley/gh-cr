@@ -866,25 +866,39 @@ dependencies = [
 ]
 
 [[package]]
-name = "github"
+name = "gh-threads"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "chrono",
  "chrono-humanize",
+ "clap",
+ "colorhash",
+ "dirs-next",
  "futures",
+ "futures-timer",
  "futures-util",
  "http",
  "http-body",
  "http-body-util",
  "hyper",
+ "inventory",
+ "itertools 0.14.0",
  "octocrab",
+ "ratatui",
  "serde",
  "serde_json",
+ "syntect-assets",
+ "tempfile",
  "testresult",
+ "textwrap",
+ "throbber-widgets-tui",
  "tokio",
  "tower",
+ "tui-markdown",
+ "tui-syntax-highlight",
 ]
 
 [[package]]
@@ -2546,37 +2560,6 @@ dependencies = [
  "once_cell",
  "rustix 1.1.2",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "terminal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "chrono",
- "chrono-humanize",
- "clap",
- "colorhash",
- "dirs-next",
- "futures",
- "futures-timer",
- "futures-util",
- "github",
- "inventory",
- "itertools 0.14.0",
- "octocrab",
- "ratatui",
- "serde",
- "serde_json",
- "syntect-assets",
- "tempfile",
- "testresult",
- "textwrap",
- "throbber-widgets-tui",
- "tokio",
- "tui-markdown",
- "tui-syntax-highlight",
 ]
 
 [[package]]

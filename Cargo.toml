@@ -1,8 +1,9 @@
-[workspace]
-resolver = "2"
-members = ["crates/github", "crates/terminal"]
+[package]
+name = "gh-threads"
+version = "0.1.0"
+edition = "2024"
 
-[workspace.dependencies]
+[dependencies]
 anyhow = "1.0.100"
 futures = "0.3.31"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -12,3 +13,24 @@ chrono = { version = "0.4.38", features = ["clock", "serde"] }
 chrono-humanize = "0.2.3"
 testresult = "0.4.1"
 futures-util = "0.3.31"
+octocrab = "0.48.0"
+inventory = "0.3.21"
+dirs-next = "2.0.0"
+tempfile = "3.12.0"
+clap = { version = "4.5.18", features = ["derive"] }
+textwrap = "0.16.1"
+arc-swap = { version = "1.7.1", features = ["serde"] }
+futures-timer = "3.0.3"
+ratatui = { version = "0.29.0", features = ["unstable-widget-ref", "scrolling-regions"] }
+itertools = "0.14.0"
+throbber-widgets-tui = "0.9.0"
+tui-syntax-highlight = "0.1.2"
+syntect-assets = "0.23.6"
+tui-markdown = "0.3.6"
+colorhash = "0.1.3"
+bytes = "1.11.0"
+http = "1.3.1"
+hyper = "1.8.1"
+tower = "0.5.2"
+http-body = "1.0.1"
+http-body-util = "0.1.3"

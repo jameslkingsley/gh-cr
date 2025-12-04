@@ -2,12 +2,13 @@ use std::sync::OnceLock;
 
 use anyhow::Result;
 use clap::Parser;
-use github::GitHub;
 
-use crate::{app::run_app, context::Context, states::AppState};
+use crate::{app::run_app, context::Context, github::GitHub, states::AppState};
 
 mod app;
 mod context;
+mod github;
+mod prelude;
 mod states;
 mod utils;
 mod views;

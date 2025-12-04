@@ -71,8 +71,7 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
             .ctx
             .threads
             .current_thread()
-            .ok()
-            .and_then(|(_, c)| c.first())
+            .and_then(|t| t.comments.nodes.first())
         {
             lines.push(Line::from_iter([
                 Span::styled("› ", Style::default().dark_gray()),
