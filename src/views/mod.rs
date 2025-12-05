@@ -1,2 +1,2 @@
 pub mod loading;
-pub mod threads;
+pub mod reviews;

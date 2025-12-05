@@ -12,7 +12,7 @@ use crate::{
     context::Context,
     states::{AppState, View},
     utils::{clean, is_dirty},
-    views::{loading::LoadingView, threads::ThreadsView},
+    views::{loading::LoadingView, reviews::ReviewsView},
 };
 
 pub async fn run_app<B: Backend>(
@@ -31,6 +31,8 @@ pub async fn run_app<B: Backend>(
 
         if is_dirty() || ctx.is_loading() || ctx.is_working() {
             terminal.draw(|frame| {
+                state.scroll.viewport(frame.area());
+
                 if ctx.is_loading() {
                     frame.render_stateful_widget_ref(LoadingView, frame.area(), &mut state);
                     return;
@@ -39,8 +41,8 @@ pub async fn run_app<B: Backend>(
                 let render_time = Instant::now();
 
                 match state.view {
-                    View::Threads => frame.render_stateful_widget_ref(
-                        ThreadsView { ctx: &ctx },
+                    View::Reviews => frame.render_stateful_widget_ref(
+                        ReviewsView { ctx: &ctx },
                         frame.area(),
                         &mut state,
                     ),

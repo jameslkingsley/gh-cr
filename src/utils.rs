@@ -4,8 +4,6 @@ use std::{
 };
 
 use ratatui::{
-    buffer::{Buffer, Cell},
-    layout::Rect,
     style::{Color, Style},
     text::{Line, Span, Text},
 };
@@ -26,7 +24,7 @@ pub fn clean() {
     DIRTY.store(false, Ordering::Relaxed);
 }
 
-pub fn highlight_diff_hunk<'a>(diff: &'a str, theme: Theme) -> Text<'a> {
+pub fn highlight_diff_hunk(text: &mut Text, diff: &str, theme: Theme) {
     let diff = textwrap::dedent(diff)
         .lines()
         .map(|line| {
@@ -49,7 +47,7 @@ pub fn highlight_diff_hunk<'a>(diff: &'a str, theme: Theme) -> Text<'a> {
         line.spans.insert(0, Span::raw("  "));
     }
 
-    highlight
+    text.extend(highlight);
 }
 
 thread_local! {
@@ -72,26 +70,6 @@ pub fn syntax_highlight<'a>(lang: Option<&str>, src: &str, theme: Theme) -> Text
     })
 }
 
-pub fn blit_content(src: &Buffer, viewport: Rect, dest: &mut Buffer, scroll_offset: usize) {
-    let blank = Cell::default();
-    let src_height = src.area.height as usize;
-
-    for y in 0..viewport.height {
-        let dst_y = viewport.y + y;
-        let src_y = scroll_offset.saturating_add(y as usize);
-
-        for x in 0..viewport.width {
-            let dst_x = viewport.x + x;
-            let cell = if src_y < src_height {
-                src.cell((x, src_y as u16)).cloned().unwrap_or_default()
-            } else {
-                blank.clone()
-            };
-            dest[(dst_x, dst_y)] = cell;
-        }
-    }
-}
-
 pub fn sanitised_markdown(md: &str) -> String {
     // Fixes ghost characters left by tabs.
     // Probably more of a bug in Ratatui or Crossterm
@@ -108,7 +86,7 @@ pub fn sanitised_markdown(md: &str) -> String {
 pub fn wrap_markdown_body(
     body: &str,
     width: usize,
-    output: &mut Text,
+    output: &mut Vec<Line>,
     text_style: Style,
     code_style: Style,
 ) {
@@ -120,17 +98,17 @@ pub fn wrap_markdown_body(
             // Process accumulated text before code block
             if !current_text.is_empty() && !in_code_block {
                 for wrapped_line in textwrap::wrap(&current_text, width) {
-                    output.push_line(Line::raw(wrapped_line.into_owned()).style(text_style));
+                    output.push(Line::raw(wrapped_line.into_owned()).style(text_style));
                 }
                 current_text.clear();
             }
 
             // Toggle code block state and add the line as-is
             in_code_block = !in_code_block;
-            output.push_line(Line::raw(line.to_owned()).style(code_style));
+            output.push(Line::raw(line.to_owned()).style(code_style));
         } else if in_code_block {
             // In code block: add line as-is without wrapping
-            output.push_line(Line::raw(line.to_owned()).style(code_style));
+            output.push(Line::raw(line.to_owned()).style(code_style));
         } else {
             // Not in code block: accumulate text for wrapping
             if !current_text.is_empty() {
@@ -143,13 +121,13 @@ pub fn wrap_markdown_body(
     // Process any remaining accumulated text
     if !current_text.is_empty() {
         for wrapped_line in textwrap::wrap(&current_text, width) {
-            output.push_line(Line::raw(wrapped_line.into_owned()).style(text_style));
+            output.push(Line::raw(wrapped_line.into_owned()).style(text_style));
         }
     }
 }
 
-pub fn stylize_block(text: &mut Text, style: Style) {
-    let line_len = text.lines.len();
+pub fn stylize_block(text: &mut Vec<Line>, style: Style) {
+    let line_len = text.len();
     for (index, line) in text.iter_mut().enumerate() {
         let block = match index {
             0 if line_len == 1 => "",

@@ -77,7 +77,7 @@ pub struct IssueComment {
     pub id: String,
 }
 
-impl RenderableComment for &IssueComment {
+impl RenderableComment for IssueComment {
     fn author(&self) -> &str {
         &self.author.login
     }
@@ -152,7 +152,7 @@ pub struct ReviewComment {
     pub subject_type: String,
 }
 
-impl RenderableComment for &ReviewComment {
+impl RenderableComment for ReviewComment {
     fn author(&self) -> &str {
         &self.author.login
     }

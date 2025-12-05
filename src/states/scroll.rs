@@ -1,140 +1,81 @@
+use std::ops::Div;
+
 use anyhow::Result;
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{
+    crossterm::event::{Event, KeyCode, KeyEvent},
+    layout::Rect,
+    widgets::ScrollbarState,
+};
 
 use crate::utils::dirty;
 
 #[derive(Debug, Default)]
 pub struct ScrollState {
-    pub offset: usize,
-    pub content_height: usize,
-    pub viewport_height: usize,
+    pub inner: ScrollbarState,
+    pub content_length: usize,
+    pub viewport: Rect,
+    pub vertical: usize,
 }
 
 impl ScrollState {
-    pub fn max_scroll(&self) -> usize {
-        self.content_height.saturating_sub(self.viewport_height)
+    pub fn content_length(&mut self, new_length: usize) {
+        self.content_length = new_length;
+        self.inner = self.inner.content_length(self.content_length);
+        self.vertical = self.vertical.min(self.content_length);
     }
 
-    pub fn scroll_down(&mut self, lines: usize) {
-        let max_scroll = self.max_scroll();
-        let new_offset = (self.offset + lines).min(max_scroll);
-        if new_offset != self.offset {
-            self.offset = new_offset;
-            dirty();
-        }
+    pub fn viewport(&mut self, area: Rect) {
+        self.viewport = area;
     }
 
-    pub fn scroll_up(&mut self, lines: usize) {
-        let new_offset = self.offset.saturating_sub(lines);
-        if new_offset != self.offset {
-            self.offset = new_offset;
-            dirty();
-        }
+    pub fn reset(&mut self) {
+        self.vertical = 0;
+        self.inner = self.inner.position(self.vertical);
+        dirty();
     }
 
-    pub fn scroll_page_down(&mut self) {
-        let page = self.viewport_height.max(1);
-        self.scroll_down(page);
-    }
+    pub fn scroll(&mut self, delta: isize) {
+        let clamp = self
+            .content_length
+            .saturating_sub(self.viewport.height.div(2) as usize);
 
-    pub fn scroll_page_up(&mut self) {
-        let page = self.viewport_height.max(1);
-        self.scroll_up(page);
-    }
+        self.vertical = self.vertical.saturating_add_signed(delta).max(0).min(clamp);
 
-    pub fn scroll_to_top(&mut self) {
-        if self.offset != 0 {
-            self.offset = 0;
-            dirty();
-        }
-    }
+        self.inner = self.inner.position(self.vertical);
 
-    pub fn scroll_to_bottom(&mut self) {
-        let max_scroll = self.max_scroll();
-        if self.offset != max_scroll {
-            self.offset = max_scroll;
-            dirty();
-        }
-    }
-
-    pub fn update_scrollbar_state(&mut self, content_height: u16, viewport_height: u16) {
-        self.content_height = usize::from(content_height);
-        self.viewport_height = usize::from(viewport_height);
-
-        let max_scroll = self.max_scroll();
-        if self.offset > max_scroll {
-            self.offset = max_scroll;
-            dirty();
-        }
+        dirty();
     }
 
     pub fn tick(&mut self, event: &Event) -> Result<bool> {
-        Ok(match event {
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            })
-            | Event::Key(KeyEvent {
-                code: KeyCode::Char('q'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            }) => true,
-            Event::Key(key) => {
-                match key {
-                    KeyEvent {
-                        code: KeyCode::Down,
-                        modifiers: KeyModifiers::ALT,
-                        ..
-                    } => {
-                        self.scroll_to_bottom();
-                    }
-                    KeyEvent {
-                        code: KeyCode::Up,
-                        modifiers: KeyModifiers::ALT,
-                        ..
-                    } => {
-                        self.scroll_to_top();
-                    }
-                    KeyEvent {
-                        code: KeyCode::Down,
-                        ..
-                    } => {
-                        self.scroll_down(1);
-                    }
-                    KeyEvent {
-                        code: KeyCode::Up, ..
-                    } => {
-                        self.scroll_up(1);
-                    }
-                    KeyEvent {
-                        code: KeyCode::PageDown,
-                        ..
-                    } => {
-                        self.scroll_page_down();
-                    }
-                    KeyEvent {
-                        code: KeyCode::PageUp,
-                        ..
-                    } => {
-                        self.scroll_page_up();
-                    }
-                    KeyEvent {
-                        code: KeyCode::Home,
-                        ..
-                    } => {
-                        self.scroll_to_top();
-                    }
-                    KeyEvent {
-                        code: KeyCode::End, ..
-                    } => {
-                        self.scroll_to_bottom();
-                    }
-                    _ => {}
+        match event {
+            Event::Key(key) => match key {
+                KeyEvent {
+                    code: KeyCode::Down,
+                    ..
+                } => {
+                    self.scroll(1);
                 }
-                false
-            }
-            _ => false,
-        })
+                KeyEvent {
+                    code: KeyCode::Up, ..
+                } => {
+                    self.scroll(-1);
+                }
+                KeyEvent {
+                    code: KeyCode::Home,
+                    ..
+                } => {
+                    self.scroll(self.content_length as isize);
+                }
+                KeyEvent {
+                    code: KeyCode::End, ..
+                } => {
+                    self.scroll(-(self.content_length as isize));
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        Ok(false)
     }
 }

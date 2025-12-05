@@ -126,6 +126,7 @@ impl Threads {
             && key.code == KeyCode::Right
         {
             self.next_thread()?;
+            state.scroll.reset();
         }
 
         // Previous thread
@@ -133,6 +134,7 @@ impl Threads {
             && key.code == KeyCode::Left
         {
             self.prev_thread()?;
+            state.scroll.reset();
         }
 
         // Next comment

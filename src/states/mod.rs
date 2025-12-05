@@ -30,7 +30,7 @@ use crate::{
 #[derive(Debug, Default, Copy, Clone)]
 pub enum View {
     #[default]
-    Threads,
+    Reviews,
 }
 
 #[allow(dead_code)]
