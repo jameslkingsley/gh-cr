@@ -9,10 +9,10 @@ use ratatui::{
 
 use crate::{context::Context, states::AppState};
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct PullRequestHeader<'ctx> {
     pub ctx: &'ctx Context,
+    pub show_thread_info: bool,
 }
 
 impl StatefulWidgetRef for PullRequestHeader<'_> {
@@ -51,7 +51,10 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
         if let Some(author) = pr.user.as_ref() {
             meta.push(Span::styled("› ", Style::default().dark_gray()));
 
-            meta.push(Span::styled(author.login.as_str(), Style::default().gray()));
+            meta.push(Span::styled(
+                author.login.as_str(),
+                Style::default().dark_gray(),
+            ));
         }
 
         if let Some(updated_at) = pr.updated_at {
@@ -59,7 +62,10 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
                 meta.push(Span::styled(" · ", Style::default().dark_gray()));
             }
 
-            meta.push(Span::styled(updated_at.humanize(), Style::default().gray()));
+            meta.push(Span::styled(
+                updated_at.humanize(),
+                Style::default().dark_gray(),
+            ));
         }
 
         if let Some(count) = pr.changed_files {
@@ -72,14 +78,16 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
                 count,
                 if count == 1 { "" } else { "s" }
             );
-            meta.push(Span::styled(label, Style::default().gray()));
+            meta.push(Span::styled(label, Style::default().dark_gray()));
         }
 
         if !meta.is_empty() {
             lines.push(Line::from(meta));
         }
 
-        if let Some(thread) = self.ctx.threads.current_thread() {
+        if self.show_thread_info
+            && let Some(thread) = self.ctx.threads.current_thread()
+        {
             if let Some(comment) = thread.comments.nodes.first() {
                 lines.push(Line::from_iter([
                     Span::styled("› ", Style::default().dark_gray()),
@@ -94,26 +102,20 @@ impl StatefulWidgetRef for PullRequestHeader<'_> {
                     Span::raw(" "),
                     thread
                         .is_resolved
-                        .then_some(Span::styled(
-                            " resolved ",
-                            Style::default().white().on_green(),
-                        ))
-                        .unwrap_or(Span::styled(
-                            " unresolved ",
-                            Style::default().black().on_yellow(),
-                        )),
+                        .then_some(Span::styled("resolved", Style::default().light_green()))
+                        .unwrap_or(Span::styled("unresolved", Style::default().light_yellow())),
                     Span::raw(" "),
                     Span::from(format!(
                         "{}:{}",
                         comment.path,
                         comment.line.unwrap_or(comment.original_line.unwrap_or(1)),
                     ))
-                    .style(Style::default().gray()),
+                    .style(Style::default().dark_gray()),
                 ]));
             }
-        }
 
-        lines.push(Line::default());
+            lines.push(Line::default());
+        }
 
         Paragraph::new(Text::from(lines)).render(area, buf);
     }

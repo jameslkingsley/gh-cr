@@ -3,7 +3,7 @@ use std::u16;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Flex, Layout, Rect},
-    style::{Style, Stylize},
+    style::*,
     text::{Line, Span, Text},
     widgets::{Paragraph, StatefulWidget, StatefulWidgetRef, Widget},
 };
@@ -11,26 +11,26 @@ use ratatui::{
 use crate::{
     context::Context,
     states::AppState,
-    utils::highlight_diff_hunk,
+    utils::{sanitised_markdown, stylize_block, wrap_markdown_body},
     widgets::{
         comment::comment_into_text, control_hints::ControlHints, pr_header::PullRequestHeader,
         spinner::Spinner,
     },
 };
 
-/// A view of review threads on the pull request
+/// The standard conversations view of a pull request
 #[derive(Debug)]
-pub struct ReviewsView<'ctx> {
+pub struct ConversationsView<'ctx> {
     pub ctx: &'ctx Context,
 }
 
-impl<'ctx> StatefulWidgetRef for ReviewsView<'ctx> {
+impl<'ctx> StatefulWidgetRef for ConversationsView<'ctx> {
     type State = AppState;
 
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let [_, header_wide, _, main, _, footer_wide] = Layout::vertical([
             Constraint::Length(1), // Spacer
-            Constraint::Length(3), // Header
+            Constraint::Length(2), // Header
             Constraint::Length(1), // Spacer
             Constraint::Fill(1),   // Main
             Constraint::Length(1), // Spacer
@@ -48,7 +48,7 @@ impl<'ctx> StatefulWidgetRef for ReviewsView<'ctx> {
             .areas(main);
 
             let mut content = Text::default();
-            self.render_diff(&mut content, state);
+            self.render_description(&mut content, main);
             content.push_line("");
             self.render_comments(&mut content, main);
 
@@ -66,7 +66,7 @@ impl<'ctx> StatefulWidgetRef for ReviewsView<'ctx> {
             .areas(main);
 
             let mut content = Text::default();
-            self.render_minimised_diff(&mut content);
+            self.render_minimised_description(&mut content, main);
             content.push_line("");
             self.render_comments(&mut content, main);
 
@@ -82,7 +82,7 @@ impl<'ctx> StatefulWidgetRef for ReviewsView<'ctx> {
 
         let pr_header = PullRequestHeader {
             ctx: self.ctx,
-            show_thread_info: true,
+            show_thread_info: false,
         };
         pr_header.render_ref(header, buf, state);
 
@@ -108,46 +108,50 @@ impl<'ctx> StatefulWidgetRef for ReviewsView<'ctx> {
     }
 }
 
-impl<'ctx> ReviewsView<'ctx> {
-    fn render_diff(&self, text: &mut Text, state: &mut AppState) {
-        let Some(thread) = self.ctx.threads.current_thread() else {
+impl<'ctx> ConversationsView<'ctx> {
+    fn render_description(&self, text: &mut Text, area: Rect) {
+        let Some(pr) = self.ctx.pr.as_ref() else {
             return;
         };
 
-        let comments = &thread.comments.nodes;
-
-        if comments.is_empty() {
+        let Some(body) = pr.body.as_ref() else {
             return;
-        }
+        };
 
-        if comments[0].diff_hunk.is_empty() {
-            return;
-        }
+        let mut lines: Vec<Line> = Vec::new();
 
-        highlight_diff_hunk(text, &comments[0].diff_hunk, state.theme.syntect.clone());
+        let body = sanitised_markdown(body);
+
+        wrap_markdown_body(
+            &body,
+            wrap_width(area.width),
+            &mut lines,
+            Style::new().gray(),
+            Style::new().dark_gray(),
+        );
+
+        lines.insert(0, Line::styled("PR Description", Style::new().dark_gray()));
+
+        stylize_block(&mut lines, Style::new().dark_gray());
+
+        text.extend(lines);
     }
 
-    fn render_minimised_diff(&self, text: &mut Text) {
-        let Some(thread) = self.ctx.threads.current_thread() else {
+    fn render_minimised_description(&self, text: &mut Text, area: Rect) {
+        let Some(pr) = self.ctx.pr.as_ref() else {
             return;
         };
 
-        let comments = &thread.comments.nodes;
-
-        if comments.is_empty() {
+        let Some(body) = pr.body.as_ref() else {
             return;
-        }
+        };
 
-        if comments[0].diff_hunk.is_empty() {
-            return;
-        }
-
-        let lines = comments[0].diff_hunk.lines().count();
+        let body = textwrap::wrap(body, wrap_width(area.width));
 
         text.extend([Line::from_iter([
             Span::raw("  "),
             Span::styled(
-                format!("({} lines hidden, ", lines),
+                format!("({} lines hidden, ", body.len()),
                 Style::new().dark_gray(),
             ),
             Span::styled("d", Style::new().gray()),
@@ -156,11 +160,7 @@ impl<'ctx> ReviewsView<'ctx> {
     }
 
     fn render_comments(&'ctx self, text: &mut Text<'ctx>, area: Rect) {
-        let Some(thread) = self.ctx.threads.current_thread() else {
-            return;
-        };
-
-        let comments = &thread.comments.nodes;
+        let comments = self.ctx.threads.issue_comments();
 
         if comments.is_empty() {
             return;
@@ -171,4 +171,10 @@ impl<'ctx> ReviewsView<'ctx> {
             text.push_line("");
         }
     }
+}
+
+pub fn wrap_width(area_width: u16) -> usize {
+    // Stylize block consumes 2 columns; clamp to a sensible range.
+    let available = area_width.saturating_sub(2).max(1);
+    usize::from(available).min(80)
 }

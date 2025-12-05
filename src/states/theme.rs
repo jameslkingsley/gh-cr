@@ -12,6 +12,7 @@ thread_local! {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Rgb(pub u8, pub u8, pub u8);
 
+/// TODO: Put this to use
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ThemeState {
     pub pr_title: Rgb,

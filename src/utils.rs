@@ -10,6 +10,10 @@ use ratatui::{
 use syntect_assets::assets::HighlightingAssets;
 use tui_syntax_highlight::{Highlighter, syntect::highlighting::Theme};
 
+thread_local! {
+    static ASSETS: LazyCell<HighlightingAssets> = LazyCell::new(HighlightingAssets::from_binary);
+}
+
 pub static DIRTY: AtomicBool = AtomicBool::new(true);
 
 pub fn is_dirty() -> bool {
@@ -48,10 +52,6 @@ pub fn highlight_diff_hunk(text: &mut Text, diff: &str, theme: Theme) {
     }
 
     text.extend(highlight);
-}
-
-thread_local! {
-    static ASSETS: LazyCell<HighlightingAssets> = LazyCell::new(HighlightingAssets::from_binary);
 }
 
 pub fn syntax_highlight<'a>(lang: Option<&str>, src: &str, theme: Theme) -> Text<'a> {

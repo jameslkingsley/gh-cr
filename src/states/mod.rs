@@ -23,14 +23,17 @@ use tempfile::NamedTempFile;
 use throbber_widgets_tui::ThrobberState;
 
 use crate::{
+    context::Context,
     states::{scroll::ScrollState, theme::ThemeState},
     utils::dirty,
 };
 
 #[derive(Debug, Default, Copy, Clone)]
 pub enum View {
+    ReviewsAll,
     #[default]
-    Reviews,
+    ReviewsUnresolved,
+    Convo,
 }
 
 #[allow(dead_code)]
@@ -41,7 +44,7 @@ pub struct AppState {
     pub view: View,
     pub throbber: ThrobberState,
     pub render_time: Duration,
-    pub show_diffs: bool,
+    pub expand_context: bool,
     pub force_render: bool,
 }
 
@@ -53,7 +56,7 @@ impl Default for AppState {
             view: Default::default(),
             throbber: Default::default(),
             render_time: Duration::ZERO,
-            show_diffs: true,
+            expand_context: true,
             force_render: false,
         }
     }
@@ -71,7 +74,7 @@ impl AppState {
         Ok(())
     }
 
-    pub fn tick(&mut self, event: &Event) -> Result<bool> {
+    pub fn tick(&mut self, event: &Event, ctx: &mut Context) -> Result<bool> {
         match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
@@ -83,11 +86,34 @@ impl AppState {
                 modifiers: KeyModifiers::NONE,
                 ..
             }) => return Ok(true),
+            Event::Key(KeyEvent {
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => {
+                self.cycle_view();
+                ctx.threads.hide_resolved = match self.view {
+                    View::ReviewsAll => false,
+                    View::ReviewsUnresolved => true,
+                    View::Convo => ctx.threads.hide_resolved,
+                };
+                ctx.threads.current_thread = 0;
+                dirty();
+            }
             Event::Resize(_, _) => dirty(),
             _ => {}
         }
 
         self.scroll.tick(event)
+    }
+
+    pub fn cycle_view(&mut self) {
+        self.view = match self.view {
+            View::ReviewsAll => View::ReviewsUnresolved,
+            View::ReviewsUnresolved => View::Convo,
+            View::Convo => View::ReviewsAll,
+        };
+        dirty();
     }
 
     pub fn suspend_for_editor(&mut self, initial_contents: String) -> Result<String> {

@@ -12,7 +12,7 @@ use crate::{
     context::Context,
     states::{AppState, View},
     utils::{clean, is_dirty},
-    views::{loading::LoadingView, reviews::ReviewsView},
+    views::{convo::ConversationsView, loading::LoadingView, reviews::ReviewsView},
 };
 
 pub async fn run_app<B: Backend>(
@@ -41,8 +41,18 @@ pub async fn run_app<B: Backend>(
                 let render_time = Instant::now();
 
                 match state.view {
-                    View::Reviews => frame.render_stateful_widget_ref(
+                    View::ReviewsAll => frame.render_stateful_widget_ref(
                         ReviewsView { ctx: &ctx },
+                        frame.area(),
+                        &mut state,
+                    ),
+                    View::ReviewsUnresolved => frame.render_stateful_widget_ref(
+                        ReviewsView { ctx: &ctx },
+                        frame.area(),
+                        &mut state,
+                    ),
+                    View::Convo => frame.render_stateful_widget_ref(
+                        ConversationsView { ctx: &ctx },
                         frame.area(),
                         &mut state,
                     ),
@@ -56,7 +66,7 @@ pub async fn run_app<B: Backend>(
 
         if poll(Duration::from_millis(100))? {
             let event = read()?;
-            if state.tick(&event)? || ctx.tick(&event, &mut state)? {
+            if state.tick(&event, &mut ctx)? || ctx.tick(&event, &mut state)? {
                 break;
             }
         }

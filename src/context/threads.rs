@@ -1,21 +1,37 @@
 use anyhow::{Result, anyhow};
+use itertools::Itertools;
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 
 use crate::{
     context::tasks::{Task, Tasks},
-    github::threads::{PullRequestThreadsResponse, ReviewThread},
-    states::AppState,
+    github::threads::{IssueComment, PullRequestThreadsResponse, ReviewThread},
+    states::{AppState, View},
     utils::dirty,
 };
 
 #[derive(Debug, Default)]
 pub struct Threads {
+    pub current_thread: usize,
+    pub hide_resolved: bool,
     data: Option<PullRequestThreadsResponse>,
-    current_thread: usize,
     current_comment: Option<usize>,
 }
 
 impl Threads {
+    pub fn review_threads(&self) -> Vec<&ReviewThread> {
+        self.data
+            .as_ref()
+            .map(|d| {
+                d.pull_request
+                    .review_threads
+                    .nodes
+                    .iter()
+                    .filter(|n| !self.hide_resolved || !n.is_resolved)
+                    .collect_vec()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn replace_threads(&mut self, data: PullRequestThreadsResponse) {
         if data
             .pull_request
@@ -33,16 +49,13 @@ impl Threads {
     }
 
     pub fn thread_len(&self) -> usize {
-        self.data
-            .as_ref()
-            .map(|d| d.pull_request.review_threads.nodes.len())
-            .unwrap_or(0)
+        self.review_threads().len()
     }
 
     pub fn current_thread_index(&self) -> usize {
         match self.data.as_ref() {
-            Some(data) => {
-                assert!(self.current_thread < data.pull_request.review_threads.nodes.len());
+            Some(_) => {
+                assert!(self.current_thread <= self.review_threads().len());
                 self.current_thread
             }
             None => {
@@ -53,13 +66,20 @@ impl Threads {
     }
 
     pub fn current_thread(&self) -> Option<&ReviewThread> {
+        self.review_threads()
+            .get(self.current_thread_index())
+            .map(|thread| &**thread)
+    }
+
+    pub fn issue_comments(&self) -> &[IssueComment] {
         self.data
             .as_ref()
-            .map(|d| &d.pull_request.review_threads.nodes[self.current_thread_index()])
+            .map(|d| d.pull_request.comments.nodes.as_slice())
+            .unwrap_or_default()
     }
 
     pub fn next_thread(&mut self) -> Result<()> {
-        if self.current_thread >= self.thread_len() - 1 {
+        if self.current_thread >= self.thread_len().saturating_sub(1) {
             self.current_thread = 0;
         } else {
             self.current_thread += 1;
@@ -73,7 +93,7 @@ impl Threads {
 
     pub fn prev_thread(&mut self) -> Result<()> {
         if self.current_thread == 0 {
-            self.current_thread = self.thread_len() - 1;
+            self.current_thread = self.thread_len().saturating_sub(1);
         } else {
             self.current_thread -= 1;
         }
@@ -104,8 +124,10 @@ impl Threads {
         };
 
         self.current_comment = Some(match self.current_comment {
-            Some(i) => (i + thread.comments.nodes.len() - 1) % thread.comments.nodes.len(),
-            None => thread.comments.nodes.len() - 1,
+            Some(i) => {
+                (i + thread.comments.nodes.len().saturating_sub(1)) % thread.comments.nodes.len()
+            }
+            None => thread.comments.nodes.len().saturating_sub(1),
         });
         dirty();
 
@@ -117,7 +139,7 @@ impl Threads {
         if let Event::Key(key) = event
             && key.code == KeyCode::Char('d')
         {
-            state.show_diffs = !state.show_diffs;
+            state.expand_context = !state.expand_context;
             dirty();
         }
 
@@ -157,23 +179,37 @@ impl Threads {
         if let Event::Key(key) = event
             && key.code == KeyCode::Char('r')
         {
-            if let Some(thread) = self.current_thread() {
+            if matches!(state.view, View::ReviewsAll | View::ReviewsUnresolved) {
+                if let Some(thread) = self.current_thread() {
+                    let Some(data) = self.data.as_ref() else {
+                        return Err(anyhow!("threads not set"));
+                    };
+                    // TODO: Set initial contents to comment thread
+                    let content = state.suspend_for_editor(String::new())?;
+                    tasks.send(Task::PostReviewComment {
+                        owner: data.owner.login.to_owned(),
+                        repo: data.name.to_owned(),
+                        pr_number: data.pull_request.number,
+                        comment_id: thread
+                            .comments
+                            .nodes
+                            .iter()
+                            .max()
+                            .map(|c| c.full_database_id)
+                            .expect("missing comment"),
+                        body: content,
+                    })?;
+                }
+            } else {
                 let Some(data) = self.data.as_ref() else {
                     return Err(anyhow!("threads not set"));
                 };
                 // TODO: Set initial contents to comment thread
                 let content = state.suspend_for_editor(String::new())?;
-                tasks.send(Task::PostReviewComment {
+                tasks.send(Task::PostIssueComment {
                     owner: data.owner.login.to_owned(),
                     repo: data.name.to_owned(),
                     pr_number: data.pull_request.number,
-                    comment_id: thread
-                        .comments
-                        .nodes
-                        .iter()
-                        .max()
-                        .map(|c| c.full_database_id)
-                        .expect("missing comment"),
                     body: content,
                 })?;
             }

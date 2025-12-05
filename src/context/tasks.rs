@@ -17,6 +17,14 @@ pub enum Task {
         body: String,
     },
 
+    /// Posts an issue comment on a pull request
+    PostIssueComment {
+        owner: String,
+        repo: String,
+        pr_number: u64,
+        body: String,
+    },
+
     /// Fetches the comment threads for a pull request
     FetchCommentThreads {
         owner: String,
@@ -101,6 +109,26 @@ impl Worker {
                 github
                     .pulls(&owner, &repo)
                     .reply_to_comment(pr_number, CommentId(comment_id), body)
+                    .await?;
+
+                let data = github.fetch_threads(&owner, &repo, pr_number).await?;
+                let _ = self.signal_tx.send(Signal::CommentThreads { data }).await;
+
+                Ok(())
+            }
+            Task::PostIssueComment {
+                owner,
+                repo,
+                pr_number,
+                body,
+            } => {
+                let Some(github) = GH.get() else {
+                    unreachable!("github client not set")
+                };
+
+                github
+                    .issues(&owner, &repo)
+                    .create_comment(pr_number, body)
                     .await?;
 
                 let data = github.fetch_threads(&owner, &repo, pr_number).await?;
