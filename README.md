@@ -1,40 +1,41 @@
-Read and reply to GitHub pull request reviews and comments from your terminal.
+<p align="center">
+    <img src=".github/demo.gif" alt="gh-threads demo" width="480">
+</p>
+
+Read and reply to GitHub pull request review threads directly from your terminal.
+
+**Status:**
+
+- Early development. The roadmap for `v0.1` is [tracked here](https://github.com/jameslkingsley/gh-threads/issues/3)
+- Currently only supports GitHub
 
 ## Requirements
 
-- GitHub CLI (`gh`) authenticated to the repo you want to review.
-- A local checkout of the PR branch (or pass a PR number explicitly).
+- [GitHub CLI](https://cli.github.com) (`gh`) installed and authenticated
 
 ## Install
 
-```
+```bash
 gh extension install jameslkingsley/gh-threads
 ```
 
 ## Usage
 
-- Attach to the current branch’s PR:
-  ```
-  gh threads
-  ```
-- Specify a PR number explicitly:
-  ```
-  gh threads <pr-number>
-  ```
+Just run `gh threads` in your repository; it will infer the pull request from the current branch. For more options run:
+
+```bash
+gh threads --help
+```
 
 ## Controls
 
 - Left/Right: previous/next thread
 - Up/Down or mouse wheel: scroll
-- Tab: switch between unresolved / unskipped / skipped
-- d: toggle diff hunk
-- s: skip/unskip thread
-- r: write a reply (opens $EDITOR)
-- p: publish queued replies
+- Tab: switch between conversation / reviews (unresolved) / reviews (all)
+- d: toggle diff hunk / description
+- r: post a reply (opens `$EDITOR`)
 - q: quit
 
-## Roadmap
+## Contributing
 
-- Comment on diff hunks
-- Add comment reactions
-- Mark comments as resolved
+Contributions are welcome! The long-term goal of this tool is to provide a seamless experience for responding to and conducting code reviews directly from the terminal.

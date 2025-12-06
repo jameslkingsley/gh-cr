@@ -30,10 +30,10 @@ use crate::{
 
 #[derive(Debug, Default, Copy, Clone)]
 pub enum View {
-    ReviewsAll,
     #[default]
-    ReviewsUnresolved,
     Convo,
+    ReviewsUnresolved,
+    ReviewsAll,
 }
 
 #[allow(dead_code)]
@@ -109,9 +109,9 @@ impl AppState {
 
     pub fn cycle_view(&mut self) {
         self.view = match self.view {
-            View::ReviewsAll => View::ReviewsUnresolved,
-            View::ReviewsUnresolved => View::Convo,
-            View::Convo => View::ReviewsAll,
+            View::Convo => View::ReviewsUnresolved,
+            View::ReviewsUnresolved => View::ReviewsAll,
+            View::ReviewsAll => View::Convo,
         };
         dirty();
     }

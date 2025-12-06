@@ -140,6 +140,7 @@ impl Threads {
             && key.code == KeyCode::Char('d')
         {
             state.expand_context = !state.expand_context;
+            state.scroll.reset();
             dirty();
         }
 

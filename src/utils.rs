@@ -44,6 +44,8 @@ pub fn highlight_diff_hunk(text: &mut Text, diff: &str, theme: Theme) {
         })
         .collect::<String>();
 
+    let diff = sanitised_markdown(&diff);
+
     // let mut highlight = Text::raw(diff);
     let mut highlight = syntax_highlight(Some("diff"), &diff, theme);
 
