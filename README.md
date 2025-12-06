@@ -1,13 +1,13 @@
-<p align="center">
-    <img src=".github/demo.gif" alt="gh-threads demo" width="480">
-</p>
-
 Read and reply to GitHub pull request review threads directly from your terminal.
 
 **Status:**
 
 - Early development. The roadmap for `v0.1` is [tracked here](https://github.com/jameslkingsley/gh-threads/issues/3)
 - Currently only supports GitHub
+
+<p align="center">
+    <img src=".github/demo.gif" alt="gh-threads demo" width="480">
+</p>
 
 ## Requirements
 
