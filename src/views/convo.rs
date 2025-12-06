@@ -114,13 +114,17 @@ impl<'ctx> ConversationsView<'ctx> {
             return;
         };
 
-        let Some(body) = pr.body.as_ref() else {
+        let Some(mut body) = pr.body.as_ref().cloned() else {
             return;
         };
 
         let mut lines: Vec<Line> = Vec::new();
 
-        let body = sanitised_markdown(body);
+        if body.trim().is_empty() {
+            body = "Empty description".to_string();
+        }
+
+        let body = sanitised_markdown(&body);
 
         wrap_markdown_body(
             &body,
@@ -162,7 +166,11 @@ impl<'ctx> ConversationsView<'ctx> {
     fn render_comments(&'ctx self, text: &mut Text<'ctx>, area: Rect) {
         let comments = self.ctx.threads.issue_comments();
 
-        if comments.is_empty() {
+        if comments.is_empty() || true {
+            text.push_line(Line::from_iter([
+                Span::raw("  "),
+                Span::styled("No comments", Style::new().gray()),
+            ]));
             return;
         }
 

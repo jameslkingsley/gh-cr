@@ -163,6 +163,10 @@ impl<'ctx> ReviewsView<'ctx> {
         let comments = &thread.comments.nodes;
 
         if comments.is_empty() {
+            text.push_line(Line::from_iter([
+                Span::raw("  "),
+                Span::styled("No comments", Style::new().gray()),
+            ]));
             return;
         }
 
