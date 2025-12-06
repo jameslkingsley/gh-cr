@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd ../
+# cd ../
 
 ext=""
 if [[ "${OSTYPE}" == "msys" ]]; then
