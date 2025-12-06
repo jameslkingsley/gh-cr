@@ -27,7 +27,9 @@ pub async fn run_app<B: Backend>(
 
         state.throbber.calc_next();
 
-        ctx.poll_async()?;
+        if let Err(err) = ctx.poll_async() {
+            return Err(err);
+        }
 
         if is_dirty() || ctx.is_loading() || ctx.is_working() {
             terminal.draw(|frame| {

@@ -26,7 +26,7 @@ pub struct Context {
     pub threads: Threads,
     tasks: Tasks,
     task_status: Status,
-    recv: Option<Receiver<(Repository, PullRequest)>>,
+    recv: Option<Receiver<Result<(Repository, PullRequest)>>>,
 }
 
 impl Context {
@@ -62,12 +62,24 @@ impl Context {
 
                 let (owner_str, repo_str, pr_num) =
                     if args.owner.is_none() || args.repo.is_none() || args.pr.is_none() {
-                        let guessed = guess_pull_request().await?;
-                        (
-                            args.owner.unwrap_or(guessed.owner),
-                            args.repo.unwrap_or(guessed.repo),
-                            args.pr.unwrap_or(guessed.pr),
-                        )
+                        match guess_pull_request().await {
+                            Ok(guessed) => {
+                                if guessed.pr.is_none() && args.pr.is_none() {
+                                    let _ = tx.send(Err(anyhow!("No pull request specified")));
+                                    return Ok(());
+                                }
+
+                                (
+                                    args.owner.unwrap_or(guessed.owner),
+                                    args.repo.unwrap_or(guessed.repo),
+                                    args.pr.unwrap_or_else(|| guessed.pr.unwrap()),
+                                )
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(e));
+                                return Ok(());
+                            }
+                        }
                     } else {
                         (args.owner.unwrap(), args.repo.unwrap(), args.pr.unwrap())
                     };
@@ -80,7 +92,7 @@ impl Context {
 
                 pr.repo = Some(Box::new(repo.clone()));
 
-                let _ = tx.send((repo, pr));
+                let _ = tx.send(Ok((repo, pr)));
 
                 Ok::<(), Error>(())
             }
@@ -100,13 +112,18 @@ impl Context {
 
     pub fn poll_async(&mut self) -> Result<()> {
         if let Some(rx) = &mut self.recv {
-            if let Some(Ok((repo, pr))) = rx.now_or_never() {
-                // Repo or pull request has changed, so fetch threads
-                self.enqueue_thread_fetch(&pr)?;
-                self.recv = None;
-                self.repo = Some(repo);
-                self.pr = Some(pr);
-                dirty();
+            if let Some(Ok(data)) = rx.now_or_never() {
+                match data {
+                    Ok((repo, pr)) => {
+                        // Repo or pull request has changed, so fetch threads
+                        self.enqueue_thread_fetch(&pr)?;
+                        self.recv = None;
+                        self.repo = Some(repo);
+                        self.pr = Some(pr);
+                        dirty();
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
 
