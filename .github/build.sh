@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# cd ../
-
 ext=""
 if [[ "${OSTYPE}" == "msys" ]]; then
   ext=".exe"

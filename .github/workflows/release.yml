@@ -29,6 +29,6 @@ jobs:
       TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v5
-      - uses: cli/gh-extension-precompile@v2
+      - uses: jameslkingsley/gh-extension-precompile@a619b56cf65ef84ad2e4e5b28e8ac6020250062e
         with:
           build_script_override: ".github/build.sh"
