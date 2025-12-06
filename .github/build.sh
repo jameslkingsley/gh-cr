@@ -1,5 +1,7 @@
 #!/bin/bash
 
+cd ../
+
 ext=""
 if [[ "${OSTYPE}" == "msys" ]]; then
   ext=".exe"
@@ -16,4 +18,4 @@ if [[ "${CARGO_BUILD_TARGET}" == *"android"* ]]; then
   export CARGO_TARGET_${UNDERSCORE_TARGET}_LINKER=/usr/local/lib/android/sdk/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/${CARGO_BUILD_TARGET}21-clang
 fi
 
-cargo build --release && mkdir dist && cp target/${CARGO_BUILD_TARGET}/release/gh-cr"$ext" dist/gh-cr_"$1"_"${TARGET}""$ext"
+cargo build --release && mkdir dist && cp target/${CARGO_BUILD_TARGET}/release/gh-threads"$ext" dist/gh-threads_"$1"_"${TARGET}""$ext"

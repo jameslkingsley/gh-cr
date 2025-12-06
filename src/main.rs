@@ -24,7 +24,6 @@ pub static GH: OnceLock<GitHub> = OnceLock::new();
 )]
 pub struct Cli {
     /// Override the inferred PR number
-    #[arg(short, long)]
     pr: Option<u64>,
 
     /// Override the inferred owner

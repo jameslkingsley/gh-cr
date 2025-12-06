@@ -1,4 +1,4 @@
-Review GitHub pull request threads from your terminal using the GitHub CLI.
+Read and reply to GitHub pull request reviews and comments from your terminal.
 
 ## Requirements
 
@@ -8,18 +8,18 @@ Review GitHub pull request threads from your terminal using the GitHub CLI.
 ## Install
 
 ```
-gh extension install jameslkingsley/gh-cr
+gh extension install jameslkingsley/gh-threads
 ```
 
 ## Usage
 
 - Attach to the current branch’s PR:
   ```
-  gh cr
+  gh threads
   ```
 - Specify a PR number explicitly:
   ```
-  gh cr <pr-number>
+  gh threads <pr-number>
   ```
 
 ## Controls
