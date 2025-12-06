@@ -21,6 +21,7 @@ use ratatui::{
 };
 use tempfile::NamedTempFile;
 use throbber_widgets_tui::ThrobberState;
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 use crate::{
     context::Context,
@@ -46,6 +47,8 @@ pub struct AppState {
     pub render_time: Duration,
     pub expand_context: bool,
     pub force_render: bool,
+    pub cmd_palette_open: bool,
+    pub cmd_palette_input: Input,
 }
 
 impl Default for AppState {
@@ -58,6 +61,8 @@ impl Default for AppState {
             render_time: Duration::ZERO,
             expand_context: true,
             force_render: false,
+            cmd_palette_open: false,
+            cmd_palette_input: Input::default(),
         }
     }
 }
@@ -75,6 +80,12 @@ impl AppState {
     }
 
     pub fn tick(&mut self, event: &Event, ctx: &mut Context) -> Result<bool> {
+        if self.cmd_palette_open {
+            if let Some(_) = self.cmd_palette_input.handle_event(event) {
+                dirty();
+            }
+        }
+
         match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
@@ -98,6 +109,26 @@ impl AppState {
                     View::Convo => ctx.threads.hide_resolved,
                 };
                 ctx.threads.current_thread = 0;
+                dirty();
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('/'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => {
+                if !self.cmd_palette_open {
+                    self.cmd_palette_input.reset();
+                }
+                self.cmd_palette_open = true;
+                dirty();
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                ..
+            }) => {
+                self.cmd_palette_open = false;
+                self.cmd_palette_input.reset();
                 dirty();
             }
             Event::Resize(_, _) => dirty(),

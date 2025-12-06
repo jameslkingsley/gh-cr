@@ -2,10 +2,10 @@ use std::u16;
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Flex, Layout, Rect},
+    layout::{Constraint, Flex, Layout, Margin, Rect},
     style::*,
     text::{Line, Span, Text},
-    widgets::{Paragraph, StatefulWidget, StatefulWidgetRef, Widget},
+    widgets::{Block, Paragraph, StatefulWidget, StatefulWidgetRef, Widget, Wrap},
 };
 
 use crate::{
@@ -28,13 +28,19 @@ impl<'ctx> StatefulWidgetRef for ConversationsView<'ctx> {
     type State = AppState;
 
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let footer_constraint = if state.cmd_palette_open {
+            Constraint::Max(4)
+        } else {
+            Constraint::Length(2)
+        };
+
         let [_, header_wide, _, main, _, footer_wide] = Layout::vertical([
             Constraint::Length(1), // Spacer
             Constraint::Length(2), // Header
             Constraint::Length(1), // Spacer
             Constraint::Fill(1),   // Main
             Constraint::Length(1), // Spacer
-            Constraint::Length(2), // Footer
+            footer_constraint,     // Footer
         ])
         .flex(Flex::Start)
         .areas(area);
@@ -93,17 +99,26 @@ impl<'ctx> StatefulWidgetRef for ConversationsView<'ctx> {
         ])
         .areas(footer_wide);
 
-        let [footer_left, footer_right] =
-            Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)])
-                .flex(Flex::Start)
-                .areas(footer_full);
+        if state.cmd_palette_open {
+            let footer_inner = footer_full.clone().inner(Margin::new(2, 1));
+            Block::new().on_dark_gray().render(footer_full, buf);
+            Paragraph::new(state.cmd_palette_input.value())
+                .wrap(Wrap { trim: true })
+                .style(Style::new().gray().on_dark_gray())
+                .render(footer_inner, buf);
+        } else {
+            let [footer_left, footer_right] =
+                Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)])
+                    .flex(Flex::Start)
+                    .areas(footer_full);
 
-        ControlHints::default().render(footer_left, buf, state);
+            ControlHints::default().render(footer_left, buf, state);
 
-        if self.ctx.is_working() {
-            Spinner::new()
-                .label("Working")
-                .render(footer_right, buf, state);
+            if self.ctx.is_working() {
+                Spinner::new()
+                    .label("Working")
+                    .render(footer_right, buf, state);
+            }
         }
     }
 }
